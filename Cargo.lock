@@ -1,0 +1,6 @@
+# Synthetic metadata only; no application build or dependencies.
+version = 4
+
+[[package]]
+name = "rolauncher"
+version = "0.0.900"
