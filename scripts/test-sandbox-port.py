@@ -60,7 +60,7 @@ class PortTests(unittest.TestCase):
                 count += 1
         self.assertGreater(count, 30)
 
-    def test_pinned_identities_unenrolled_policy_and_unchanged_limits(self):
+    def test_pinned_enrollment_identities_and_unchanged_limits(self):
         self.assertEqual((promotion.REPO, promotion.REPO_ID, promotion.OWNER_ID),
                          (SANDBOX, REPO_ID, 71574088))
         self.assertEqual((evidence.REPO, evidence.REPO_ID, evidence.OWNER),
@@ -72,8 +72,18 @@ class PortTests(unittest.TestCase):
                          (256 * 1024**2, 256 * 1024**2, 512 * 1024**2))
         policy = json.loads((ROOT / '.github/owner-evidence-policy.json').read_text())
         self.assertEqual(policy, dict(schema=1, repository_id=REPO_ID, owner_id=71574088,
-                                     inbox=None, public_disclosure_approved=False,
-                                     disclosure_sha256=None, keys=[], revoked=[]))
+                                     inbox=5, public_disclosure_approved=True,
+                                     disclosure_sha256='c48b4ebe3972abe2d5fe75b2ef7e5a0f70065c3b7e5c71a7bc9cd8a18d09c368',
+                                     keys=['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJPXo+4JhA/+CwDnDNJYnUctFyayOVMwOMZLG1hMGhfX'],
+                                     revoked=[]))
+        loaded, active = evidence.load_policy()
+        self.assertEqual(loaded, policy)
+        self.assertEqual(active, policy['keys'])
+        raw = base64.b64decode(active[0].split()[1], validate=True)
+        self.assertEqual(raw[:19], b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00 ')
+        self.assertEqual(len(raw), 51)
+        self.assertEqual('SHA256:' + base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip('='),
+                         'SHA256:jG13DdI7llxXe3kfcJ2xnu8kftf2xe41QMv8hYkuuiQ')
         self.assertFalse((ROOT / '.github/release-intents').exists())
 
     def test_production_and_foreign_absolute_endpoints_rejected_before_transport(self):

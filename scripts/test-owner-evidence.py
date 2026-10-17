@@ -551,14 +551,47 @@ class OwnerEvidenceTests(unittest.TestCase):
         self.assertNotIn('src/updates.rs', GOVERNANCE_PATHS)
         self.assertNotIn('Cargo.toml', GOVERNANCE_PATHS)
 
-    def test_workflow_stays_hard_disabled_and_policy_unenrolled(self):
+    def test_workflow_stays_hard_disabled_with_enrolled_policy(self):
         workflow = (evidence.ROOT / '.github/workflows/release-promotion.yml').read_text()
         self.assertIn('false &&', workflow)
         self.assertIn('timeout-minutes: 60', workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('issues: read', workflow)
         self.assertNotIn('administration:', workflow)
-        with self.assertRaises(ValueError): evidence.load_policy()
+        policy, active = evidence.load_policy()
+        self.assertEqual(policy['inbox'], 5)
+        self.assertEqual(active, policy['keys'])
+
+    def test_enrollment_policy_rejects_missing_malformed_duplicate_and_wrong_identity(self):
+        approved, _ = evidence.load_policy()
+        for fault in ('missing-key', 'malformed-key', 'duplicate-key', 'repository', 'owner',
+                      'inbox', 'unknown-field', 'revoked', 'disclosure'):
+            value = copy.deepcopy(approved)
+            if fault == 'missing-key': value['keys'] = []
+            if fault == 'malformed-key': value['keys'] = ['ssh-rsa invalid']
+            if fault == 'duplicate-key': value['keys'] *= 2
+            if fault == 'repository': value['repository_id'] = 1406138209
+            if fault == 'owner': value['owner_id'] += 1
+            if fault == 'inbox': value['inbox'] = None
+            if fault == 'unknown-field': value['fingerprint'] = 'not-in-schema'
+            if fault == 'revoked':
+                value['revoked'] = ['SHA256:' + base64.b64encode(hashlib.sha256(
+                    base64.b64decode(value['keys'][0].split()[1])).digest()).decode().rstrip('=')]
+            if fault == 'disclosure': value['disclosure_sha256'] = None
+            path = self.root / 'enrollment-negative.json'
+            path.write_bytes(evidence.canonical(value))
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                evidence.load_policy(path)
+        self.assertEqual(self.api.writes, [])
+
+    def test_noncanonical_unsigned_reencoding_cannot_reuse_signature(self):
+        challenge = self.prepare()
+        response = self.response(challenge)
+        value = evidence.parse(base64.b64decode(response['payload_base64']))
+        response['payload_base64'] = base64.b64encode(json.dumps(value, indent=2).encode()).decode()
+        with self.assertRaisesRegex(ValueError, 'signature'):
+            evidence.verify(response, challenge, set(), self.policy_path)
+        self.assertEqual(self.api.writes, [])
 
 
 if __name__ == '__main__':
