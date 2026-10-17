@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import socket
 from pathlib import Path
 import subprocess
@@ -175,7 +176,12 @@ class PortTests(unittest.TestCase):
                     evidence.gh_api(path, {'body': 'forbidden'}, inbox=1)
             process.assert_not_called()
 
-    def test_every_workflow_job_is_literal_false_and_repository_pinned(self):
+    def test_only_hosted_ci_jobs_are_enabled_and_repository_pinned(self):
+        enabled = {('ci-release.yml', 'branch-flow'), ('ci-release.yml', 'windows-checks'),
+                   ('ci-release.yml', 'linux-checks'), ('linux.yml', 'linux-checks')}
+        disabled = {('beta-release.yml', 'windows-checks'), ('beta-release.yml', 'linux-checks'),
+                    ('release-promotion.yml', 'promote'), ('owner-evidence-dry-run.yml', 'verify')}
+        seen = set()
         for workflow in (ROOT / '.github/workflows').glob('*.yml'):
             text = workflow.read_text()
             jobs = text.split('\njobs:\n', 1)[1].splitlines()
@@ -184,15 +190,48 @@ class PortTests(unittest.TestCase):
             for position, index in enumerate(job_headers):
                 end = job_headers[position + 1] if position + 1 < len(job_headers) else len(jobs)
                 job = '\n'.join(jobs[index:end])
+                identity = (workflow.name, jobs[index].strip().removesuffix(':'))
+                seen.add(identity)
                 with self.subTest(workflow=workflow.name, job=jobs[index]):
-                    self.assertIn('    if: >-\n      false &&', job)
-                    self.assertIn("github.repository == '" + SANDBOX + "'", job)
-                    self.assertIn("github.repository_id == '1423257712'", job)
+                    guard = ('    if: >-\n' + ('' if identity in enabled else '      false &&\n')
+                             + "      github.repository == '" + SANDBOX + "' &&\n"
+                             + "      github.repository_id == '1423257712'")
+                    if identity == ('release-promotion.yml', 'promote'):
+                        guard = guard.replace('      false &&\n',
+                                              "      false &&\n      vars.RELEASE_PROMOTION_ENABLED == 'true' &&\n")
+                    self.assertIn(guard, job)
             self.assertNotIn('pull_request_target', text)
             self.assertNotIn('administration:', text)
+            for action in re.findall(r'uses: (\S+)', text):
+                self.assertRegex(action, r'^[\w./-]+@[a-f0-9]{40}$')
             if workflow.name != 'release-promotion.yml':
                 self.assertNotIn('contents: write', text)
                 self.assertNotIn('scripts/publish-', text)
+            if workflow.name in ('ci-release.yml', 'linux.yml'):
+                self.assertIn('permissions:\n  contents: read\n', text)
+                self.assertIn('scripts/offline_tests.py', text)
+                self.assertNotRegex(text, r'\b(cargo|dotnet|msbuild)\b')
+                for step in text.split('      - uses: actions/upload-artifact@')[1:]:
+                    self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/main'", step)
+        self.assertEqual(seen, enabled | disabled)
+
+    def test_bootstrap_uses_existing_development_and_promotion_admission(self):
+        def no_api(*args, **kwargs):
+            self.fail('Development bootstrap must not need release evidence')
+        for base, head, expected in (('dev', 'codex/sandbox-hosted-ci', 'development'),
+                                     ('dev', 'feature/sandbox-hosted-ci', 'development'),
+                                     ('main', 'dev', 'feature-promotion')):
+            event = dict(pull_request=dict(base=dict(ref=base),
+                                          head=dict(ref=head, repo=dict(full_name=SANDBOX))))
+            with self.subTest(base=base, head=head):
+                self.assertEqual(hotfix_policy.check_branch_flow(event, no_api), expected)
+        event = dict(pull_request=dict(base=dict(ref='main'),
+                                      head=dict(ref='codex/sandbox-hosted-ci', repo=dict(full_name=SANDBOX))))
+        with self.assertRaisesRegex(ValueError, 'Unauthorized main source branch'):
+            hotfix_policy.check_branch_flow(event, no_api)
+        event['pull_request']['head'] = dict(ref='dev', repo=dict(full_name=PRODUCTION))
+        with self.assertRaisesRegex(ValueError, 'Official main PR required'):
+            hotfix_policy.check_branch_flow(event, no_api)
 
     def test_legacy_beta_write_seam_is_absent(self):
         tree = ast.parse((ROOT / 'scripts/publish-beta.py').read_text())

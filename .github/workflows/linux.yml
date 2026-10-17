@@ -14,7 +14,6 @@ jobs:
   linux-checks:
     name: Linux checks (${{ matrix.distro }})
     if: >-
-      false &&
       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
       github.repository_id == '1423257712'
     runs-on: ubuntu-24.04
@@ -42,5 +41,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: matrix.distro == 'Ubuntu'
+        with:
+          python-version: '3.13'
       - name: Offline authority, signature and fixture regressions
         run: python3 scripts/offline_tests.py
