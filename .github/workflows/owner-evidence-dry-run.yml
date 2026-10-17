@@ -1,0 +1,61 @@
+name: Owner evidence sandbox dry run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: owner-evidence-sandbox
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == 'oangsa/RoLauncher-release-sandbox'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Offline signature and boundary regressions
+        run: python3 -m unittest -v test_poc
+      - name: Create fresh preflight challenge
+        run: python3 poc.py challenge preflight
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: challenge-${{ github.run_id }}-${{ github.run_attempt }}-preflight
+          path: challenges/preflight/challenge.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify live preflight evidence and signed negative cases
+        run: python3 poc.py wait preflight
+      - name: Simulate read-only preparation; create fresh final challenge
+        run: python3 poc.py challenge final
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: challenge-${{ github.run_id }}-${{ github.run_attempt }}-final
+          path: challenges/final/challenge.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify live final evidence and cross-gate replay rejection
+        run: python3 poc.py wait final
+      - name: Retain non-secret dry-run audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dry-run-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            result-*.json
+            runtime-visibility.json
+            accepted-state.json
+          if-no-files-found: warn
+          retention-days: 14
