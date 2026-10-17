@@ -14,7 +14,6 @@ jobs:
   branch-flow:
     name: Branch flow
     if: >-
-      false &&
       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
       github.repository_id == '1423257712'
     runs-on: ubuntu-24.04
@@ -35,7 +34,6 @@ jobs:
   windows-checks:
     name: Windows checks
     if: >-
-      false &&
       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
       github.repository_id == '1423257712'
     needs: branch-flow
@@ -68,7 +66,6 @@ jobs:
   linux-checks:
     name: Linux checks and package (Ubuntu 24.04)
     if: >-
-      false &&
       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
       github.repository_id == '1423257712'
     needs: branch-flow

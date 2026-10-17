@@ -1,6 +1,7 @@
 # Sandbox publisher port — local M2
 
-Status: prepared locally; every workflow job remains hard-disabled.
+Status: historical M2 bootstrap; all jobs were hard-disabled when PR #2 merged.
+Hosted CI activation is proposed separately in [Sandbox Hosted CI bootstrap](SANDBOX-HOSTED-CI.md).
 Production reference: 193c465e4d5999506f8c406ac45ff3e88d1a1a94.
 Target: oangsa/RoLauncher-release-sandbox, repository ID 1423257712, owner ID 71574088.
 
@@ -13,7 +14,7 @@ Target: oangsa/RoLauncher-release-sandbox, repository ID 1423257712, owner ID 71
 - Keep old PoC files as historical data and guard its workflow false.
 - Route both stable/beta CLIs through the common gate; omit the legacy beta upload/delete library seam.
 
-## Disabled controls
+## Original M2 disabled controls
 
 1. All eight job definitions across five workflows begin with literal false && and pin sandbox name/ID.
 2. The publisher still also requires RELEASE_PROMOTION_ENABLED=true; this port sets no repository variable.
