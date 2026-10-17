@@ -24,6 +24,10 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'signature'):
                 poc.verify(self.vector['response']['cases']['valid'], self.vector['challenge'], set(), self.vector['now'])
 
+    def test_evidence_expires_while_challenge_still_active(self):
+        with self.assertRaisesRegex(ValueError, 'expired'):
+            poc.verify(self.vector['response']['cases']['valid'], self.vector['challenge'], set(), self.vector['now'] + 61)
+
     def test_duplicate_and_oversized_json_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             poc.parse(b'{"id":1,"id":2}')

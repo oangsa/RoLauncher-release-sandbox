@@ -202,7 +202,13 @@ def bundle(payload, key):
         altered = copy.deepcopy(payload)
         if name == 'tampered-signature':
             item = copy.deepcopy(cases['valid'])
-            item['signature'] = item['signature'].replace('U1NI', 'V1NI', 1)
+            # Preserve SSHSIG framing; corrupt the actual signature bytes.
+            armor = item['signature'].strip().splitlines()
+            raw = bytearray(base64.b64decode(''.join(armor[1:-1]), validate=True))
+            raw[-1] ^= 1
+            encoded = base64.b64encode(raw).decode('ascii')
+            item['signature'] = armor[0] + '\n' + '\n'.join(
+                encoded[i:i + 70] for i in range(0, len(encoded), 70)) + '\n' + armor[-1] + '\n'
             require(item != cases['valid'], 'tamper vector not changed')
             cases[name] = item
             continue
