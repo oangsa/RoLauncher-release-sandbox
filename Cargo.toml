@@ -1,0 +1,4 @@
+[package]
+name = "rolauncher"
+version = "0.0.900"
+description = "Inert release lifecycle fixture; not the RoLauncher application"

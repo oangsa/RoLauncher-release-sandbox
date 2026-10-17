@@ -16,7 +16,10 @@ concurrency:
 
 jobs:
   verify:
-    if: github.repository == 'oangsa/RoLauncher-release-sandbox'
+    if: >-
+      false &&
+      github.repository == 'oangsa/RoLauncher-release-sandbox' &&
+      github.repository_id == '1423257712'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

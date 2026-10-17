@@ -1,0 +1,66 @@
+{
+  "files": {
+    "hotfix_policy.py": {
+      "ast_sha256": {
+        "check_branch_flow": "88899e6caedefb680759875db6e7e16031b429aff17937cd5d7cdd968f2710a2",
+        "governance_history": "e30725fb4bd283ca730d84538753b02cd7bb46959323968004141da4f8638b2e",
+        "hotfix_report": "12f552c1e8f7fd2e62fd0a00bbe0fb0cda758724f86807614ba305c491ab8caf",
+        "patch_report": "b2ff00f75cea33aa243d1fd4ca45c1a1e9893e9995cfa98c62d8532ff6aac2af",
+        "require": "3b218d97634fd91fd6595535193a2eb525911ab34ffd45793deaba58332ca99e",
+        "verify_hotfix": "03b5a6bf1f1e76620ffd27f177d43d2e7b2ae0d96ac3e7ec50e39c19c0e5750e",
+        "verify_source": "1153fb9ea2588be3afdbfa3f9bbb80eea6d6b8693958164f45804cb98cf3f11d"
+      },
+      "source_sha256": "0288fb08ef1b82746a720d257e779489c17fbe46e08fc404f38001ca1ed1b71e"
+    },
+    "owner_evidence.py": {
+      "ast_sha256": {
+        "ChallengeReady": "e09940f544fe8b2ba441348a4c56e15ccf59ac79c8b569ab77ad74fa5872d5b3",
+        "StagedEvidence": "b40e7292d1640ca728b772a40d5bed25c58028eaf37a737301e5e0cbc21d7f34",
+        "binding_for": "e287104bdb6d1b6663559d759dbb247ba1597553257af605174db91a23bdb36c",
+        "bounded_process": "8c9bc512729f1085410e08f17df2c929630c20e7857bdab43818743828bea801",
+        "canonical": "b7261df0855c8159681935040253575961bcb557a45615fafa414a73cfd39668",
+        "check_challenge": "b554b4ec08b6f789ede9e6f076c45b16913b54f98397c4a63f1ec18a773a12fd",
+        "collect": "4ea5e648611676d229f9da53d6d1b8b539999816a7f8cffaccd39b7d4c64ec20",
+        "controls_call": "0aab944b5ed1c94064eb45d05294ffaa80767e2f1d4fa4672d6908213d431905",
+        "digest": "9299983618bb3afc4b52884385556ef72dedead518362b2d054ef605a6fc422e",
+        "download_challenge": "e19f6877e871d79f6a041aa8de34da695d1ab6c02b0c6778a17d4d2cd1a61ed1",
+        "gh": "525eb2d687dec9d72cffa997b912f4bceb6cde4f027d3dd9bbde3a12c791d2c7",
+        "gh_api": "c9f0e1054956726b4c822287df6a6ad4c5c3a8428dd00263aa426058e3dc4806",
+        "load_policy": "cdcaf53258e29725c2b3ddfc907c8abf17ab9a2119b4a2cf98d03ffb361ce6d9",
+        "parse": "f38031745c42f8bf92d13dd4fb2e9124d4e1d5121c3eaaa3bf76e5bb3cc57355",
+        "project": "577328fbf13a52a2434f178c7be93d139ae754776b9963f32f4f38570642793f",
+        "require": "95ed15b88b3b6c7b88bde1e84b8a2d618008ed49f62129659be39b79a7e0bf48",
+        "response_candidates": "73df2b16791159ae7caad6af46495f9a0e36dd90011d1d3851b944621bb14847",
+        "run_identity": "a6dff28ce90c5f9451a1d03af5bea3cfdac8026b4fbd296c33d0ec8e077cb8a8",
+        "sign": "689bf94a7164dd1d22b5693bc2be58364182464180550c305f6eeb5935490957",
+        "ssh": "02ddb0d8a8ae9f0d41ed3fe7099f4ad4ae4237fd418dd57a9817963905545b33",
+        "validate_disclosure": "2301d72200442678811e38e92c82ee5bd6fe5682d50804d6d09f4f15491fded2",
+        "verify": "e9327fe7543d0772cdaca6a7b178ab90fe0d47fb4c3d88a87f82169730dd18fa",
+        "wait_response": "3988fde2d27787c61207b42b9a891d7d6987480aed707f4358febd81fdd0c007"
+      },
+      "source_sha256": "ff9404a46781814bfb5dfbe1982edcd835edd62573a8d445b13229387a4cae21"
+    },
+    "release_files.py": {
+      "ast_sha256": {
+        "checked_files": "1051d02aa582b8b83a0c31b2f8cba86d01985e85c3b6019539b2afce0e42689b"
+      },
+      "source_sha256": "79d9c6b7fa5071736df9d43a9a7d172cae77bf4dda23db4aa0577946f5a66f45"
+    },
+    "release_promotion.py": {
+      "ast_sha256": {
+        "artifact_files": "9873d9eda84a100af890282830d4e857eb1a50394b7579089e814f919c299809",
+        "content": "1f3b0fd1c54359d7ceeff909464a32e42b531183973727fb23385c4479045dcf",
+        "main": "dfe6d61d445894d96e5f151c5298e07aa47575a00a9a26fe767dd76c4192911b",
+        "promote": "2448198b009036d236ced3c44e5fc63e0325072b8e7016b88e400a2fc5d3f21a",
+        "promotion_state": "40a26d18fe351602f9ac4685ab43f6ac4ad0eccbaa02ff076a099e36264457d6",
+        "protected_branches": "a8efce717dd7922c0031cd6cf24cf6ad96a25e4b0c091732254eda84ac523704",
+        "require": "3b218d97634fd91fd6595535193a2eb525911ab34ffd45793deaba58332ca99e",
+        "successful_jobs": "bd21654fcbb4c4c6045b3182f60768ceead0226df259d34efad6afafda09418c",
+        "unchanged_run": "15b837c388b9244438f293ba03e562297953efeb304e9f419d124130f72b529a",
+        "unique_object": "1b5ff08d9963bd33a128ebf1cb49629963bd6a359ec367ad68d07e80ea9cb4af"
+      },
+      "source_sha256": "4df74b5595f35e702def7f361b4fb8d6aee7dd40006ca65ac950391a083413ab"
+    }
+  },
+  "revision": "193c465e4d5999506f8c406ac45ff3e88d1a1a94"
+}
