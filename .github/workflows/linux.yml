@@ -14,7 +14,6 @@ jobs:
   linux-checks:
     name: Linux checks (${{ matrix.distro }})
     if: >-
-      false &&
       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
       github.repository_id == '1423257712'
     runs-on: ubuntu-24.04
