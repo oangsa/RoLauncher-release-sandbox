@@ -2,9 +2,11 @@
   "schema": 1,
   "repository_id": 1423257712,
   "owner_id": 71574088,
-  "inbox": null,
-  "public_disclosure_approved": false,
-  "disclosure_sha256": null,
-  "keys": [],
+  "inbox": 5,
+  "public_disclosure_approved": true,
+  "disclosure_sha256": "c48b4ebe3972abe2d5fe75b2ef7e5a0f70065c3b7e5c71a7bc9cd8a18d09c368",
+  "keys": [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJPXo+4JhA/+CwDnDNJYnUctFyayOVMwOMZLG1hMGhfX"
+  ],
   "revoked": []
 }
