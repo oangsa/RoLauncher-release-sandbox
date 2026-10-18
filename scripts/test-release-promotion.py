@@ -56,6 +56,7 @@ class GitHubFixture:
                         repository={"full_name": REPO, "id": 1423257712}, head_repository={"full_name": REPO, "id": 1423257712})
         self.files = [{"filename": "README.md", "status": "modified"}]
         self.intent = dict(schema=1, id=INTENT, version="2.3.4", channel="stable")
+        self.intent_path = PATH
         self.intent_json = None
         self.pr = dict(merged=True, merge_commit_sha=SHA, merged_by={"id": 71574088},
                        base={"ref": "main", "repo": {"full_name": REPO, "id": 1423257712}},
@@ -105,7 +106,8 @@ class GitHubFixture:
                                        workflow_run={"id": 12, "head_sha": SHA}))
 
     def with_intent(self):
-        self.files = [{"filename": PATH, "status": "added"}]
+        self.intent_path = PATH
+        self.files = [{"filename": self.intent_path, "status": "added"}]
         return self
 
     def with_beta(self):
@@ -155,7 +157,7 @@ class GitHubFixture:
             return [{"number": 4}]
         if path == "/pulls/4": return self.pr
         if path.startswith("/commits?path="): return self.history
-        if path == "/contents/" + PATH + "?ref=" + SHA:
+        if path == "/contents/" + self.intent_path + "?ref=" + self.run["head_sha"]:
             return {"encoding": "base64", "content": base64.b64encode((self.intent_json or json.dumps(self.intent)).encode()).decode()}
         if path.startswith("/contents/"):
             name = path.split("/contents/")[1].split("?ref=")[0]
@@ -389,6 +391,32 @@ class PromotionTests(unittest.TestCase):
                 self.assertEqual(promote_event(github, event), "consumed")
                 self.assertEqual(github.writes, [])
 
+    def test_linux_rerun_retriggers_same_source_with_current_attempt(self):
+        from phase_d_capacity import ArtifactWorkspace
+
+        github = GitHubFixture().with_intent()
+        github.linux_run["run_attempt"] = 2
+        event = dict(repository={"default_branch": "main", "full_name": REPO, "id": 1423257712},
+                     workflow_run=copy.deepcopy(github.linux_run))
+        original = github.__call__
+
+        def rerun_api(path, method="GET", body=None, **kwargs):
+            if path == "/actions/runs/13/attempts/2/jobs?per_page=100":
+                return {"jobs": github.linux_jobs, "total_count": len(github.linux_jobs)}
+            return original(path, method, body, **kwargs)
+
+        workspace = ArtifactWorkspace(release_promotion.capacity_policy(),
+                                      parent=Path(__file__).resolve().parents[1])
+        rerun_api.workspace = workspace
+        self.addCleanup(workspace.close)
+        self.assertEqual(promote_event(rerun_api, event), "published")
+        receipt = json.loads(github.assets["release-promotion.json"]["data"])
+        self.assertEqual(receipt["source"], SHA)
+        self.assertEqual(receipt["run"], github.run["id"])
+        self.assertEqual(receipt["attempt"], 1)
+        self.assertEqual([item["name"] for item in receipt["artifacts"]],
+                         ["release-files-attempt-1", "release-linux-files-attempt-1"])
+
     def test_cli_disabled_or_wrong_event_never_contacts_github(self):
         script = str(Path(__file__).with_name("release_promotion.py"))
         for enabled, event in (("false", "workflow_run"), ("true", "pull_request"), ("true", "workflow_dispatch")):
@@ -432,6 +460,35 @@ class PromotionTests(unittest.TestCase):
     def test_owner_merge_authorizes_exact_added_record(self):
         github = GitHubFixture().with_intent()
         self.assertEqual(authorize(github, github.run), github.intent)
+
+    def test_intent_requires_one_new_matching_canonical_v4_path(self):
+        other_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        for fault in ("noncanonical-v4", "wrong-filename", "multiple-intents"):
+            with self.subTest(fault=fault):
+                github = GitHubFixture().with_intent()
+                if fault == "noncanonical-v4":
+                    github.intent["id"] = "12345678-1234-1234-8234-123456789abc"
+                elif fault == "wrong-filename":
+                    github.intent_path = PATH.replace(INTENT, other_id)
+                    github.files[0]["filename"] = github.intent_path
+                else:
+                    github.files.append({"filename": ".github/release-intents/" + other_id + ".json",
+                                         "status": "added"})
+                with self.assertRaises(ValueError):
+                    authorize(github, github.run)
+                self.assertEqual(github.writes, [])
+
+    def test_stable_intent_requires_merged_owner_promotion_evidence(self):
+        for fault in ("not-merged", "wrong-head-repository"):
+            with self.subTest(fault=fault):
+                github = GitHubFixture().with_intent()
+                if fault == "not-merged":
+                    github.pr["merged"] = False
+                else:
+                    github.pr["head"]["repo"]["id"] = 8
+                with self.assertRaisesRegex(ValueError, "Owner-authorized"):
+                    authorize(github, github.run)
+                self.assertEqual(github.writes, [])
 
     def test_deleted_and_reintroduced_intent_is_not_fresh(self):
         github = GitHubFixture().with_intent()
@@ -524,7 +581,7 @@ class PromotionTests(unittest.TestCase):
         self.assertTrue(github.release["draft"])
 
     def test_data_only_archives_reject_paths_duplicates_links_and_corruption(self):
-        for fault in ("path", "duplicate", "link", "checksum"):
+        for fault in ("path", "duplicate", "link", "checksum", "extra-entry"):
             with self.subTest(fault=fault):
                 github = GitHubFixture().with_intent()
                 with zipfile.ZipFile(io.BytesIO(github.archives[30])) as original:
@@ -542,10 +599,19 @@ class PromotionTests(unittest.TestCase):
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore", UserWarning)
                             archive.writestr(info, data)
+                    if fault == "extra-entry":
+                        archive.writestr("unapproved.txt", b"not part of the release contract")
                 github.archives[30] = buffer.getvalue()
                 github.artifacts[0]["digest"] = "sha256:" + hashlib.sha256(buffer.getvalue()).hexdigest()
                 with self.assertRaises(ValueError): promote(github, github.run)
                 self.assertEqual(github.writes, [])
+
+    def test_wrong_artifact_id_is_rejected_before_publication(self):
+        github = GitHubFixture().with_intent()
+        github.artifacts[0]["id"] = 31
+        with self.assertRaisesRegex(ValueError, "digest"):
+            promote(github, github.run)
+        self.assertEqual(github.writes, [])
 
     def test_old_drafts_historical_releases_and_wrong_channels_are_preserved(self):
         for fault in ("old-marker", "wrong-source", "wrong-channel", "published-history"):

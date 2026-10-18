@@ -166,6 +166,69 @@ class AuditTests(unittest.TestCase):
         live.verify_source_artifact(cached,binding)
         live.verify_source_artifact(cached,binding)
         self.assertEqual(calls.count('/actions/artifacts/30/zip'),1)
+
+    def test_file_backed_source_gate_rejects_wrong_sha_blob_and_tree_inventory(self):
+        import warnings
+        import zipfile
+        import phase_d_publisher as live
+        from phase_d_capacity import ArtifactWorkspace, DEFAULT_CAPACITY
+
+        source_sha='a'*40
+        good=b'Inert source\n'
+        changed=b'Different source\n'
+
+        def blob(path, content, mode='100644'):
+            digest=hashlib.sha1(b'blob '+str(len(content)).encode()+b'\0'+content).hexdigest()
+            return dict(path=path,mode=mode,type='blob',sha=digest)
+
+        def zip_bytes(entries):
+            output=io.BytesIO()
+            with zipfile.ZipFile(output,'w') as archive:
+                for name,content in entries:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore',UserWarning)
+                        archive.writestr(name,content)
+            return output.getvalue()
+
+        cases=(
+            ('wrong-source-sha','b'*40,[('AGENTS.md',good)],[blob('AGENTS.md',changed)]),
+            ('wrong-git-blob',source_sha,[('AGENTS.md',changed)],[blob('AGENTS.md',good)]),
+            ('missing-source-file',source_sha,[('AGENTS.md',good)],[blob('AGENTS.md',good),blob('README.md',b'Readme\n')]),
+            ('unexpected-source-file',source_sha,[('AGENTS.md',good),('extra.txt',b'Extra\n')],[blob('AGENTS.md',good)]),
+            ('duplicate-source-entry',source_sha,[('AGENTS.md',good),('AGENTS.md',good)],[blob('AGENTS.md',good)]),
+            ('unsupported-git-symlink',source_sha,[('AGENTS.md',good)],[blob('AGENTS.md',good,'120000')]),
+        )
+        for fault,sha,source_entries,tree in cases:
+            with self.subTest(fault=fault):
+                prefix='rolauncher-v0.0.900'
+                source=zip_bytes(source_entries)
+                outer=io.BytesIO()
+                with zipfile.ZipFile(outer,'w') as archive:
+                    for suffix in ('-setup-x64.exe','-windows-x64.zip','-SHA256SUMS.txt'):
+                        archive.writestr(prefix+suffix,b'inert')
+                    archive.writestr(prefix+'-source.zip',source)
+                raw=outer.getvalue()
+                artifact=dict(id=30,name='release-files-attempt-1',size_in_bytes=len(raw),
+                    digest='sha256:'+hashlib.sha256(raw).hexdigest(),
+                    workflow_run=dict(id=12,head_sha=sha))
+
+                def backend(path,**kwargs):
+                    if path=='/actions/runs/12/artifacts?per_page=100':
+                        return dict(total_count=1,artifacts=[artifact])
+                    if path=='/actions/artifacts/30/zip':return raw
+                    if path==f'/git/trees/{sha}?recursive=1':
+                        return dict(truncated=False,tree=tree)
+                    raise AssertionError(path)
+
+                workspace=ArtifactWorkspace(DEFAULT_CAPACITY,parent=Path(__file__).resolve().parents[1])
+                cached=live.FrozenArtifacts(backend)
+                cached.bind_workspace(workspace)
+                binding=dict(source=dict(id=12,run_attempt=1,head_sha=sha),
+                             intent=dict(version='0.0.900',channel='stable'))
+                try:
+                    with self.assertRaises(ValueError):live.verify_source_artifact(cached,binding)
+                finally:
+                    cached.close()
     def test_http_outcome_observer_receives_status_only(self):
         class Response(io.BytesIO):
             headers={}
@@ -1039,7 +1102,7 @@ class EvidenceTests(unittest.TestCase):
                     if path.startswith('/git/trees/'):return dict(truncated=False,tree=tree)
                     if path.startswith('/contents/'):
                         name=path.split('/contents/',1)[1].split('?ref=',1)[0]
-                        raw=fixtures.git(root,'show',sha+':'+name)
+                        raw=fixtures.git(root,'cat-file','blob',sha+':'+name)
                         return dict(encoding='base64',content=base64.b64encode(raw).decode())
                     if path=='/releases/latest':return None
                     path=path.replace(sha,owner.reference.SHA).replace('v0.0.900','v2.3.4')
