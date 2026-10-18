@@ -35,6 +35,8 @@ MAX_CHECKSUM_BYTES = 1024 * 1024
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_HTTP_ERROR_BODY_BYTES = 16 * 1024
 COPY_BYTES = 1024 * 1024
+RELEASE_PAGE_SIZE = 100
+MAX_RELEASE_PAGES = 10
 
 
 def capacity_policy():
@@ -355,6 +357,112 @@ def promotion_state(call, tag, sha, annotated=False):
     return ref
 
 
+def _release_shape(release):
+    """Validate the fields needed to enumerate every Release without trusting order."""
+    require(isinstance(release, dict) and type(release.get('id')) is int and release['id'] > 0,
+            'Malformed Release inventory identity')
+    require(isinstance(release.get('tag_name'), str) and release['tag_name']
+            and isinstance(release.get('target_commitish'), str) and release['target_commitish'],
+            'Malformed Release inventory source')
+    require(type(release.get('draft')) is bool and type(release.get('prerelease')) is bool,
+            'Malformed Release inventory state')
+    require('body' in release and (release['body'] is None or isinstance(release['body'], str)),
+            'Malformed Release inventory body')
+    require(isinstance(release.get('assets'), list), 'Malformed Release inventory assets')
+    names, asset_ids = set(), set()
+    for asset in release['assets']:
+        require(isinstance(asset, dict) and type(asset.get('id')) is int and asset['id'] > 0
+                and isinstance(asset.get('name'), str) and asset['name']
+                and type(asset.get('size')) is int and asset['size'] >= 0
+                and isinstance(asset.get('digest'), str)
+                and re.fullmatch(r'sha256:[a-f0-9]{64}', asset['digest'])
+                and asset.get('state') in ('uploaded', 'starter'),
+                'Malformed Release inventory asset')
+        require(asset['name'] not in names, 'Duplicate Release inventory asset name')
+        require(asset['id'] not in asset_ids, 'Duplicate Release inventory asset ID')
+        names.add(asset['name'])
+        asset_ids.add(asset['id'])
+    return release
+
+
+def _release_signature(release):
+    _release_shape(release)
+    assets = tuple(sorted((a['id'], a['name'], a['size'], a['digest'], a['state'])
+                          for a in release['assets']))
+    return (release['id'], release['tag_name'], release['target_commitish'], release.get('name'),
+            release['draft'], release['prerelease'], release['body'], release.get('immutable'),
+            release.get('published_at'), assets)
+
+
+def _release_inventory_once(call):
+    inventory = {}
+    for page_number in range(1, MAX_RELEASE_PAGES + 1):
+        page = call(f'/releases?per_page={RELEASE_PAGE_SIZE}&page={page_number}')
+        require(isinstance(page, list) and len(page) <= RELEASE_PAGE_SIZE,
+                'Release inventory page malformed or oversized')
+        for release in page:
+            _release_shape(release)
+            require(release['id'] not in inventory, 'Release inventory contains a duplicate ID')
+            inventory[release['id']] = release
+        if len(page) < RELEASE_PAGE_SIZE:
+            # A short page is only terminal if an explicit next-page probe is empty.
+            terminal = call(f'/releases?per_page={RELEASE_PAGE_SIZE}&page={page_number + 1}')
+            require(isinstance(terminal, list) and not terminal,
+                    'Release inventory pagination is inconsistent')
+            return inventory
+    raise ValueError('Release inventory exceeds the bounded page limit')
+
+
+def release_inventory(call):
+    """Read a bounded, repeatable authenticated Releases inventory, including drafts."""
+    first = _release_inventory_once(call)
+    second = _release_inventory_once(call)
+    require({rid: _release_signature(item) for rid, item in first.items()}
+            == {rid: _release_signature(item) for rid, item in second.items()},
+            'Release inventory changed between paginated reads')
+    return first
+
+
+def _validate_release_candidate(release, release_id, tag, sha, beta, marker, files):
+    _release_shape(release)
+    require(release['id'] == release_id and release['tag_name'] == tag
+            and release['target_commitish'] == sha and release['prerelease'] is beta,
+            'Existing Release has a different tag, source or channel')
+    body = release['body']
+    markers = re.findall(r'<!-- release-promotion:[a-f0-9]{64} -->', body or '')
+    require(markers == [marker], 'Existing Release has a different intent or receipt marker')
+    names = {asset['name'] for asset in release['assets']}
+    require(len(names) == len(release['assets']) and names <= set(files),
+            'Existing Release has unexpected assets')
+    for asset in release['assets']:
+        size, digest = file_identity(files[asset['name']])
+        require(asset['state'] == 'uploaded' and asset['size'] == size
+                and asset['digest'] == 'sha256:' + digest,
+                'Existing release asset differs; quarantine instead of replacing')
+    return release
+
+
+def discover_release(call, tag, sha, beta, marker, files):
+    """Select zero or one exact-tag Release and independently validate its numeric ID."""
+    inventory = release_inventory(call)
+    tagged = [release for release in inventory.values() if release['tag_name'] == tag]
+    require(len(tagged) <= 1, 'Multiple Releases for tag; owner reconciliation required')
+    if not tagged:
+        return None, inventory
+    listed = _validate_release_candidate(tagged[0], tagged[0]['id'], tag, sha, beta, marker, files)
+    release_id = listed['id']
+    readback = call('/releases/' + str(release_id))
+    require(isinstance(readback, dict) and type(readback.get('id')) is int
+            and readback['id'] == release_id, 'Numeric Release-ID readback mismatch')
+    _validate_release_candidate(readback, release_id, tag, sha, beta, marker, files)
+    require(_release_signature(readback) == _release_signature(listed),
+            'Numeric Release-ID readback differs from inventory')
+    authorize_id = getattr(call, 'authorize_release', None)
+    if callable(authorize_id):
+        authorize_id(readback)
+    return readback, inventory
+
+
 def promote(call, run, evidence=None, workspace=None):
     bound_workspace = getattr(call, "workspace", None)
     require(workspace is None or bound_workspace is None or workspace is bound_workspace,
@@ -420,10 +528,8 @@ def _promote(call, run, evidence, workspace):
     files["release-promotion.json"] = receipt_data
     tag = ("beta-v" if beta else "v") + version
     ref = promotion_state(call, tag, sha, annotated=beta)
-    release = call("/releases/tags/" + tag, missing_ok=True)
+    release, release_snapshot = discover_release(call, tag, sha, beta, marker, files)
     if release:
-        require(marker in (release.get("body") or "") and release["target_commitish"] == sha
-                and release["prerelease"] == beta, "Existing release has different intent, artifacts, source or channel")
         require(ref is not None, "Existing release tag is missing")
     if not beta and (not release or release["draft"]):
         latest = call("/releases/latest", missing_ok=True)
@@ -443,9 +549,16 @@ def _promote(call, run, evidence, workspace):
         unchanged_run(call, run, source_checks)
         if linux_run:
             unchanged_run(call, linux_run, LINUX_CHECKS)
-        require(promotion_state(call, tag, sha, annotated=beta) == ref
-                and call('/releases/tags/' + tag, missing_ok=True) == release,
+        current_ref = promotion_state(call, tag, sha, annotated=beta)
+        current_release, current_inventory = discover_release(call, tag, sha, beta, marker, files)
+        require(current_ref == ref
+                and {rid: _release_signature(item) for rid, item in current_inventory.items()}
+                == {rid: _release_signature(item) for rid, item in release_snapshot.items()}
+                and ((current_release is None and release is None)
+                     or (current_release is not None and release is not None
+                         and _release_signature(current_release) == _release_signature(release))),
                 'Publication state changed during preflight; retry with fresh evidence')
+        release = current_release
         evidence.fresh()
     else:
         evidence.resume(binding)
@@ -454,10 +567,25 @@ def _promote(call, run, evidence, workspace):
         evidence.fresh()
         call("/git/refs", "POST", {"ref": "refs/tags/" + tag, "sha": sha})
     if not release:
+        # Repeat the full bounded inventory immediately before draft creation. GitHub
+        # has no atomic "create-if-absent" operation, so the workflow concurrency lock
+        # and this fail-closed readback are the available duplicate-race controls.
+        current_release, current_inventory = discover_release(call, tag, sha, beta, marker, files)
+        require(current_release is None
+                and {rid: _release_signature(item) for rid, item in current_inventory.items()}
+                == {rid: _release_signature(item) for rid, item in release_snapshot.items()},
+                'Release appeared before draft creation; retry with fresh evidence')
         evidence.fresh()
-        release = call("/releases", "POST", {"tag_name": tag, "target_commitish": sha,
+        created = call("/releases", "POST", {"tag_name": tag, "target_commitish": sha,
                        "name": "RoLauncher " + version, "body": notes + "\n\n" + marker + "\n",
                        "draft": True, "prerelease": beta, "make_latest": "false"})
+        require(isinstance(created, dict) and type(created.get('id')) is int and created['id'] > 0,
+                'Release creation response lacks a numeric ID')
+        release = call('/releases/' + str(created['id']))
+        _validate_release_candidate(release, created['id'], tag, sha, beta, marker, files)
+        authorize_id = getattr(call, 'authorize_release', None)
+        if callable(authorize_id):
+            authorize_id(release)
     path = "/releases/" + str(release["id"])
     upload = release["upload_url"].split("{")[0]
     require(upload == f'https://uploads.github.com/repos/{REPO}/releases/{release["id"]}/assets', "Unexpected upload host/path")

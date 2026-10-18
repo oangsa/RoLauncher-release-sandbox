@@ -1,10 +1,12 @@
-# RoLauncher 0.0.900
+# RoLauncher 0.0.901
 
 **SANDBOX ONLY — inert lifecycle fixtures, no application binaries.**
 This is the Architecture C sandbox port for oangsa/RoLauncher-release-sandbox (1423257712).
-Hosted builders are active; publisher, beta and historical PoC remain hard-disabled.
+Hosted builders are active. Publisher execution is gated by `RELEASE_PROMOTION_ENABLED` and `PHASE_D_LIVE_AUTHORIZED`; their live values are not verified. Beta and historical PoC workflows remain hard-disabled.
 Phase C signer, inbox and disclosure policy are described in [Owner evidence enrollment](docs/OWNER-EVIDENCE.md).
-No release intent is enrolled; live signing and publication require separate approval.
+The v0.0.900 candidate remains unpublished and has two same-tag draft Releases; do not resume or mutate them.
+The upcoming v0.0.901 fixture tests corrected draft recovery and is not a usable application.
+Live signing and publication require separate owner approval.
 
 ## Offline checks
 
@@ -23,11 +25,11 @@ The old non-publishing PoC remains historical and is locally guarded false.
 3. Source CI must be a real push/main run after an owner-authorized merge.
 4. Publisher requires complete strict controls, fresh owner signatures at both gates and native immutable readback.
 
-No release intent is checked in.
-The synthetic version metadata and notes exercise the unchanged publisher data contract.
+The v0.0.900 release intent is checked in, but its duplicate drafts make that candidate ambiguous. The upcoming v0.0.901 fixture exercises bounded draft recovery and Release-ID admission.
 Small M2 fixtures do not prove large-upload, expiry or native GitHub behavior.
 
 See docs/SANDBOX-PORT.md for identity pins and remaining gates.
 Current Phase D implementation and live-approval gates are recorded in [Phase D validation](docs/PHASE-D-VALIDATION.md).
+The current duplicate-draft recovery decision and owner gates are recorded in [draft recovery remediation](docs/PHASE-D-DRAFT-RECOVERY-REMEDIATION.md).
 The authoritative docs/SANDBOX-RELEASE-LIFECYCLE.md is copied from the production merge.
 Historical PoC instructions are archived in docs/POC-README.md and grant no M2 publishing authorization.

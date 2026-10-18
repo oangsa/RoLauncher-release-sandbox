@@ -2,6 +2,8 @@
 
 **Status:** sequencing is viable at the source-contract level with one owner-controlled Linux rerun after SHA and artifact verification. This is not approval to activate or run the Publisher.
 
+**Superseded for current candidate recovery:** use [Phase D draft recovery remediation](PHASE-D-DRAFT-RECOVERY-REMEDIATION.md). This earlier sequence predates the two same-tag v0.0.900 drafts and must not be used to resume them.
+
 ## Activation and candidate sequence
 
 1. PR #20 has merged into `dev` at `f5c36daca15d569e53eac651be9a795dd71fb9e6`. It added only inert proposed candidate files; `.github/release-intents/` remains absent, and all five post-merge contexts passed on attempt 1.
