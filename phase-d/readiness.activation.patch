@@ -1,0 +1,10 @@
+--- a/.github/workflows/phase-d-readiness.yml
++++ b/.github/workflows/phase-d-readiness.yml
+@@ -10,7 +10,6 @@
+   inspect:
+     name: Inspect publisher permission visibility
+     if: >-
+-      false &&
+       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
+       github.repository_id == '1423257712' &&
+       github.ref == 'refs/heads/main'

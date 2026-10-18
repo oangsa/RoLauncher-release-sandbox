@@ -1,6 +1,6 @@
 # Sandbox owner evidence enrollment
 
-This policy proposal takes effect only after owner-approved protected merges into sandbox main.
+Enrolled in sandbox main by owner-merged PR #8, commit `b010f87fdefe1283e8e0fc417341a6fb96e9ccee`.
 Enrollment permits verification of the named public identity; it grants no operational signature or publication authority.
 
 ## Exact identities

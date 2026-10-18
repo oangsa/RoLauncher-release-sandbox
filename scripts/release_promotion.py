@@ -416,7 +416,7 @@ class SafeRedirect(HTTPRedirectHandler):
         return redirected
 
 
-def github_api(token):
+def github_api(token, observer=None):
     opener = build_opener(SafeRedirect())
     def call(path, method="GET", body=None, missing_ok=False, binary=None, raw=False):
         url = path if path.startswith("https://") else "https://api.github.com/repos/" + REPO + path
@@ -428,6 +428,8 @@ def github_api(token):
             headers["Content-Type"] = "application/octet-stream" if binary is not None else "application/json"
         try:
             with opener.open(Request(url, data=data, method=method, headers=headers), timeout=120) as response:
+                if observer is not None:
+                    observer(getattr(response, 'status', None))
                 limit = MAX_ARCHIVE_BYTES if raw else MAX_JSON_BYTES
                 length = response.headers.get("Content-Length")
                 require(length is None or 0 <= int(length) <= limit, "GitHub response Content-Length exceeds size limit")
@@ -435,6 +437,8 @@ def github_api(token):
                 require(len(result) <= limit, "GitHub response exceeds size limit")
                 return result if raw else json.loads(result, object_pairs_hook=unique_object) if result else None
         except HTTPError as error:
+            if observer is not None:
+                observer(error.code)
             if error.code == 404 and missing_ok:
                 return None
             raise RuntimeError(f"GitHub {method} failed (HTTP {error.code}); no automatic mutation retry") from None

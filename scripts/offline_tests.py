@@ -41,7 +41,7 @@ def main():
             super().__init__(args, *positional, **kwargs)
     subprocess.Popen = OfflineProcess
     names = ('test-release-promotion.py', 'test-hotfix-policy.py',
-             'test-owner-evidence.py', 'test-sandbox-port.py')
+             'test-owner-evidence.py', 'test-sandbox-port.py', 'test-phase-d.py')
     suite = unittest.TestSuite()
     for name in names:
         spec = importlib.util.spec_from_file_location(name.removesuffix('.py').replace('-', '_'), ROOT / 'scripts' / name)
