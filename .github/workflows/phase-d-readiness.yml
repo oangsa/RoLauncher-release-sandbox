@@ -10,7 +10,6 @@ jobs:
   inspect:
     name: Inspect publisher permission visibility
     if: >-
-      false &&
       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
       github.repository_id == '1423257712' &&
       github.ref == 'refs/heads/main'

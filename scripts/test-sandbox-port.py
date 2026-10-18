@@ -186,12 +186,12 @@ class PortTests(unittest.TestCase):
                     evidence.gh_api(path, {'body': 'forbidden'}, inbox=1)
             process.assert_not_called()
 
-    def test_only_hosted_ci_jobs_are_enabled_and_repository_pinned(self):
+    def test_hosted_ci_and_manual_readiness_are_repository_pinned(self):
         enabled = {('ci-release.yml', 'branch-flow'), ('ci-release.yml', 'windows-checks'),
-                   ('ci-release.yml', 'linux-checks'), ('linux.yml', 'linux-checks')}
+                   ('ci-release.yml', 'linux-checks'), ('linux.yml', 'linux-checks'),
+                   ('phase-d-readiness.yml', 'inspect')}
         disabled = {('beta-release.yml', 'windows-checks'), ('beta-release.yml', 'linux-checks'),
-                    ('release-promotion.yml', 'promote'), ('owner-evidence-dry-run.yml', 'verify'),
-                    ('phase-d-readiness.yml', 'inspect')}
+                    ('release-promotion.yml', 'promote'), ('owner-evidence-dry-run.yml', 'verify')}
         seen = set()
         for workflow in (ROOT / '.github/workflows').glob('*.yml'):
             text = workflow.read_text()
@@ -220,7 +220,9 @@ class PortTests(unittest.TestCase):
             if workflow.name != 'release-promotion.yml':
                 self.assertNotIn('scripts/publish-', text)
             if workflow.name=='phase-d-readiness.yml':
-                self.assertIn('  workflow_dispatch:',text)
+                self.assertEqual(text.split('on:\n',1)[1].split('\npermissions:',1)[0].strip(),
+                                 'workflow_dispatch:')
+                self.assertIn("      github.ref == 'refs/heads/main'",text)
                 self.assertNotIn('  push:',text)
                 self.assertNotIn('workflow_run:',text)
                 self.assertIn('run: python scripts/phase_d_readiness.py',text)
