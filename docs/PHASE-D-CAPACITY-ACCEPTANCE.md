@@ -9,7 +9,7 @@
 | Offline regression suite | PASS — 131 tests | `python scripts/offline_tests.py`, Windows Python 3.13.10 |
 | Actionlint | PASS — 6 workflow files | Actionlint 1.7.12, locally checksum-verified binary |
 | Python syntax and whitespace | PASS | `py_compile` for 11 scripts; trailing whitespace and JSON checks for 15 files |
-| Hosted CI contexts | Pending | Record the exact PR HEAD SHA, run IDs, attempts and all five contexts |
+| Hosted CI contexts | PASS — all five required contexts | Final PR HEAD, run IDs and attempts are recorded in the PR description |
 | GitHub artifact service transfer | NOT RUN | Requires a separately authorized live workflow run |
 | Owner-attested Publisher gates | NOT RUN | No live activation or signing was performed |
 | Production repository or release | NOT RUN | Production remains untouched |
