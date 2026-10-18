@@ -93,7 +93,21 @@ class PortTests(unittest.TestCase):
         self.assertEqual(len(raw), 51)
         self.assertEqual('SHA256:' + base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip('='),
                          'SHA256:jG13DdI7llxXe3kfcJ2xnu8kftf2xe41QMv8hYkuuiQ')
-        self.assertFalse((ROOT / '.github/release-intents').exists())
+
+    def test_only_the_expected_synthetic_intent_may_be_active(self):
+        intent_dir = ROOT / '.github/release-intents'
+        expected_path = intent_dir / '0db2788e-d5f3-478f-9f77-6d6d0dd064f4.json'
+        active_intents = sorted(intent_dir.iterdir()) if intent_dir.exists() else []
+        if not active_intents:
+            return
+        self.assertEqual(active_intents, [expected_path])
+        self.assertTrue(expected_path.is_file())
+        self.assertFalse(expected_path.is_symlink())
+        intent = json.loads(expected_path.read_text(encoding='utf-8'))
+        self.assertIsInstance(intent, dict)
+        self.assertIs(type(intent.get('schema')), int)
+        self.assertEqual(intent, dict(schema=1, id='0db2788e-d5f3-478f-9f77-6d6d0dd064f4',
+                                     version='0.0.900', channel='stable'))
 
     def test_production_and_foreign_absolute_endpoints_rejected_before_transport(self):
         forbidden = [
@@ -312,3 +326,4 @@ class PortTests(unittest.TestCase):
                 fixtures.package('unknown', second, root)
             with self.assertRaises(ValueError):
                 fixtures.source_files(root, 'main')
+
