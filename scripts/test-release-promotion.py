@@ -202,21 +202,26 @@ class PromotionTests(unittest.TestCase):
         for raw in (True, False):
             for header in (None, "1000", "1"):
                 with self.subTest(raw=raw, header=header):
+                    responses = []
                     class Response(io.BytesIO):
                         headers = {} if header is None else {"Content-Length": header}
                         reads = []
+                        def geturl(self): return self.url
                         def read(self, size=-1):
                             self.reads.append(size)
                             return super().read(size)
-                    response = Response(b"x" * 1000)
                     class Connection:
-                        def open(self, *args, **kwargs): return response
+                        def open(self, request, *args, **kwargs):
+                            response = Response(b"x" * 1000)
+                            response.url = request.full_url
+                            responses.append(response)
+                            return response
                     with patch.object(release_promotion, "build_opener", return_value=Connection()), patch.multiple(
                             release_promotion, MAX_ARCHIVE_BYTES=64, MAX_JSON_BYTES=64):
                         api = release_promotion.github_api("synthetic-token")
                         with self.assertRaisesRegex(ValueError, "size limit"):
                             api("/actions/artifacts/30/zip", raw=raw)
-                    self.assertEqual(response.reads, [] if header == "1000" else [65])
+                    self.assertEqual(responses[0].reads, [] if header == "1000" else [65])
 
     def test_separate_beta_owner_creation_bypass_preserves_compatibility(self):
         for fault in (None, "app", "wrong-role", "pr-only"):

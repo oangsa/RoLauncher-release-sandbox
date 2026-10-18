@@ -111,9 +111,12 @@ class PortTests(unittest.TestCase):
         urls = []
         class Response(io.BytesIO):
             headers = {}
+            def geturl(self): return self.url
         def opened(request, **kwargs):
             urls.append(request.full_url)
-            return Response(b'{}')
+            response = Response(b'{}')
+            response.url = request.full_url
+            return response
         with patch.object(promotion, 'build_opener') as factory:
             factory.return_value.open.side_effect = opened
             api = promotion.github_api('synthetic-token-never-sent')

@@ -30,6 +30,7 @@ MAX_EXPANDED_BYTES = 512 * 1024 * 1024  # Across both platform archives, not per
 MAX_ENTRY_BYTES = 256 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 1024 * 1024
 MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_HTTP_ERROR_BODY_BYTES = 16 * 1024
 COPY_BYTES = 1024 * 1024
 
 
@@ -416,6 +417,58 @@ class SafeRedirect(HTTPRedirectHandler):
         return redirected
 
 
+def _response_header(headers, name):
+    try:
+        matches = [value for key, value in headers.items()
+                   if isinstance(key, str) and key.lower() == name.lower()]
+    except (AttributeError, TypeError):
+        return False, None
+    if len(matches) != 1:
+        return bool(matches), None
+    return True, matches[0] if isinstance(matches[0], str) else None
+
+
+def _documented_api_error(body):
+    if not isinstance(body, bytes) or len(body) > MAX_HTTP_ERROR_BODY_BYTES:
+        return None
+    try:
+        value = json.loads(body, object_pairs_hook=unique_object)
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return None
+    if isinstance(value, dict) and value.get('message') == 'Resource not accessible by integration':
+        return 'integration_permission_denied'
+    return None
+
+
+class GitHubAPIError(RuntimeError):
+    """HTTP failure with bounded, sanitized evidence for narrow security decisions."""
+    def __init__(self, method, url, status, headers, body):
+        self.method = method
+        parsed = urlparse(url)
+        self.scheme = parsed.scheme
+        self.host = parsed.netloc
+        self.path = parsed.path
+        self.status = status
+        self.code = status
+        self.documented_error = _documented_api_error(body)
+        _, accepted = _response_header(headers, 'X-Accepted-GitHub-Permissions')
+        self.accepted_permissions = accepted.strip().lower() if accepted and len(accepted) <= 256 else None
+        _, remaining = _response_header(headers, 'X-RateLimit-Remaining')
+        self.rate_limit_remaining = int(remaining) if remaining and re.fullmatch(r'[0-9]{1,10}', remaining) else None
+        self.retry_after_present, _ = _response_header(headers, 'Retry-After')
+        # Never include the body, headers, URL query, or credentials in diagnostics.
+        super().__init__(f'GitHub {method} failed (HTTP {status}); no automatic mutation retry')
+
+    def is_explicit_permission_restriction(self, method, path, required_permissions):
+        """Recognize only GitHub's documented permission response for one endpoint."""
+        return (self.status == 403 and self.method == method and self.scheme == 'https'
+                and self.host == 'api.github.com' and self.path == path
+                and self.documented_error == 'integration_permission_denied'
+                and self.accepted_permissions == required_permissions.lower()
+                and self.rate_limit_remaining is not None and self.rate_limit_remaining > 0
+                and not self.retry_after_present)
+
+
 def github_api(token, observer=None):
     opener = build_opener(SafeRedirect())
     def call(path, method="GET", body=None, missing_ok=False, binary=None, raw=False):
@@ -428,6 +481,8 @@ def github_api(token, observer=None):
             headers["Content-Type"] = "application/octet-stream" if binary is not None else "application/json"
         try:
             with opener.open(Request(url, data=data, method=method, headers=headers), timeout=120) as response:
+                if not raw:
+                    require(response.geturl() == url, "Unexpected GitHub API redirect")
                 if observer is not None:
                     observer(getattr(response, 'status', None))
                 limit = MAX_ARCHIVE_BYTES if raw else MAX_JSON_BYTES
@@ -441,7 +496,15 @@ def github_api(token, observer=None):
                 observer(error.code)
             if error.code == 404 and missing_ok:
                 return None
-            raise RuntimeError(f"GitHub {method} failed (HTTP {error.code}); no automatic mutation retry") from None
+            try:
+                error_body = error.read(MAX_HTTP_ERROR_BODY_BYTES + 1)
+            except (OSError, ValueError):
+                error_body = None
+            finally:
+                error.close()
+            if error_body is not None and len(error_body) > MAX_HTTP_ERROR_BODY_BYTES:
+                error_body = None
+            raise GitHubAPIError(method, url, error.code, error.headers, error_body) from None
     return call
 
 

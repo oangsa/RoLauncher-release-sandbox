@@ -128,13 +128,115 @@ class AuditTests(unittest.TestCase):
         class Response(io.BytesIO):
             headers={}
             status=201
+            def geturl(self):return self.url
         class Connection:
-            def open(self,*args,**kwargs): return Response(b'{"id":50}')
+            def open(self,request,*args,**kwargs):
+                response=Response(b'{"id":50}')
+                response.url=request.full_url
+                return response
         statuses=[]
         with patch.object(promotion,'build_opener',return_value=Connection()):
             api=promotion.github_api('disposable-not-a-credential',observer=statuses.append)
             self.assertEqual(api('/releases','POST',{'draft':True}),{'id':50})
         self.assertEqual(statuses,[201])
+
+    def test_http_failure_matrix_is_sanitized_and_never_permission_classified(self):
+        cases=(
+            ('primary rate limit',403,{'X-RateLimit-Remaining':'0'},b'primary-limit-secret'),
+            ('secondary rate limit',403,{'Retry-After':'60'},
+             b'{"message":"You have exceeded a secondary rate limit."}'),
+            ('throttle header',403,{'Retry-After':'60','X-RateLimit-Remaining':'5'},b'throttle-secret'),
+            ('ambiguous body',403,{},b'ambiguous-body-secret'),
+            ('no classification',403,{},b''),
+            ('unauthorized',401,{},b'unauthorized-secret'),
+            ('not found',404,{},b'not-found-secret'),
+            ('too many requests',429,{},b'rate-limit-secret'),
+            ('server error',500,{},b'server-secret'),
+            ('bad gateway',502,{},b'gateway-secret'),
+            ('unavailable',503,{},b'unavailable-secret'))
+        for name,status,headers,body in cases:
+            with self.subTest(name=name):
+                class Connection:
+                    def open(self,request,timeout):
+                        raise HTTPError(request.full_url,status,'synthetic failure',headers,io.BytesIO(body))
+                observed=[]
+                with patch.object(promotion,'build_opener',return_value=Connection()):
+                    api=promotion.github_api('disposable-test-token',observer=observed.append)
+                    with self.assertRaisesRegex(RuntimeError,'no automatic mutation retry') as raised:
+                        api('/immutable-releases')
+                self.assertIn(f'HTTP {status}',str(raised.exception))
+                self.assertEqual(observed,[status])
+                self.assertNotIn('disposable-test-token',str(raised.exception))
+                if body:
+                    self.assertNotIn(body.decode('ascii'),str(raised.exception))
+
+    def test_immutable_permission_classification_requires_documented_response_contract(self):
+        permission_body=b'{"message":"Resource not accessible by integration"}'
+        endpoint='/repos/'+evidence.REPO+'/immutable-releases'
+        def failure(status=403,headers=None,body=permission_body,path='/immutable-releases',method='GET'):
+            class Connection:
+                def open(self,request,timeout):
+                    raise HTTPError(request.full_url,status,'synthetic failure',headers or {},io.BytesIO(body))
+            with patch.object(promotion,'build_opener',return_value=Connection()):
+                api=promotion.github_api('disposable-classification-token')
+                with self.assertRaises(promotion.GitHubAPIError) as raised:
+                    api(path,method)
+            return raised.exception
+        # GitHub documents this error as insufficient App/PAT permissions and the
+        # header as the endpoint's required permission; rate-limit evidence is separate.
+        headers={'X-Accepted-GitHub-Permissions':'administration=read','X-RateLimit-Remaining':'17'}
+        allowed=failure(headers=headers)
+        self.assertTrue(allowed.is_explicit_permission_restriction('GET',endpoint,'administration=read'))
+        self.assertNotIn('Resource not accessible',str(allowed))
+        self.assertNotIn('disposable-classification-token',str(allowed))
+        rejected=(
+            failure(headers={'X-Accepted-GitHub-Permissions':'administration=read'}),
+            failure(headers={**headers,'X-RateLimit-Remaining':'0'}),
+            failure(headers={**headers,'Retry-After':'60'}),
+            failure(headers={**headers,'X-Accepted-GitHub-Permissions':'contents=read'}),
+            failure(headers=headers,body=b'{"message":"ambiguous 403"}'),
+            failure(headers=headers,body=b'{malformed'),
+            failure(status=429,headers=headers),
+            failure(headers=headers,path='/rulesets'),
+            failure(headers=headers,method='POST'))
+        for error in rejected:
+            with self.subTest(error=error.status,error_path=error.path,error_method=error.method):
+                self.assertFalse(error.is_explicit_permission_restriction(
+                    'GET',endpoint,'administration=read'))
+        wrong_origin=promotion.GitHubAPIError('GET',
+            'https://attacker.invalid'+endpoint,403,headers,permission_body)
+        self.assertFalse(wrong_origin.is_explicit_permission_restriction(
+            'GET',endpoint,'administration=read'))
+
+    def test_github_api_timeout_and_malformed_json_fail_closed(self):
+        class TimeoutConnection:
+            def open(self,*args,**kwargs):raise TimeoutError('synthetic timeout')
+        with patch.object(promotion,'build_opener',return_value=TimeoutConnection()):
+            with self.assertRaises(TimeoutError):promotion.github_api('disposable-token')('/immutable-releases')
+        class ResetConnection:
+            def open(self,*args,**kwargs):raise ConnectionResetError('synthetic connection reset')
+        with patch.object(promotion,'build_opener',return_value=ResetConnection()):
+            with self.assertRaises(ConnectionResetError):promotion.github_api('disposable-token')('/immutable-releases')
+        class MalformedResponse(io.BytesIO):
+            headers={}
+            status=200
+            def geturl(self):return self.url
+        class MalformedConnection:
+            def open(self,request,*args,**kwargs):
+                response=MalformedResponse(b'{malformed-json')
+                response.url=request.full_url
+                return response
+        with patch.object(promotion,'build_opener',return_value=MalformedConnection()):
+            with self.assertRaises(json.JSONDecodeError):promotion.github_api('disposable-token')('/immutable-releases')
+        class RedirectedResponse(io.BytesIO):
+            headers={}
+            status=200
+            def geturl(self):return 'https://attacker.invalid/immutable-releases'
+        class RedirectedConnection:
+            def open(self,*args,**kwargs):return RedirectedResponse(b'{"enabled":true,"enforced_by_owner":false}')
+        with patch.object(promotion,'build_opener',return_value=RedirectedConnection()):
+            with self.assertRaisesRegex(ValueError,'redirect'):
+                promotion.github_api('disposable-token')('/immutable-releases')
     def test_lost_response_records_commit_and_never_retries(self):
         writes = []
         def server(path, method='GET', body=None, **kwargs):
@@ -342,32 +444,113 @@ class EvidenceTests(unittest.TestCase):
 
     def test_visible_immutable_contradiction_denies_both_gates(self):
         f=self.fixture
+        observations=(
+            ('disabled',dict(enabled=False,enforced_by_owner=False)),
+            ('owner changed',dict(enabled=True,enforced_by_owner=True)),
+            ('missing owner field',dict(enabled=True)),
+            ('null owner field',dict(enabled=True,enforced_by_owner=None)),
+            ('malformed enabled field',dict(enabled='true',enforced_by_owner=False)))
         for phase in ('preflight','final'):
-            with self.subTest(phase=phase):
+            for name,immutable in observations:
+              with self.subTest(phase=phase,observation=name):
                 f.api=owner.LiveFixture()
-                f.state=f.root/('immutable-contradiction-'+phase)
+                f.state=f.root/('immutable-contradiction-'+phase+'-'+name.replace(' ','-'))
                 f.post(f.prepare())
                 if phase=='final':
                     f.stage()
                     f.post(f.challenge('final'))
                 before=list(f.api.writes)
                 def changed(path,*args,**kwargs):
-                    if path=='/immutable-releases':return dict(enabled=False,enforced_by_owner=False)
+                    if path=='/immutable-releases':return immutable
                     return f.api(path,*args,**kwargs)
-                with self.assertRaisesRegex(ValueError,'immutable'):
+                with self.assertRaises(ValueError):
                     promotion.promote(changed,f.api.run,f.transport('stage' if phase=='preflight' else 'finish'))
                 self.assertEqual(f.api.writes,before)
 
-    def test_forbidden_immutable_read_uses_verified_owner_observation(self):
+    def test_native_immutable_change_immediately_before_stage_or_publication_is_rejected(self):
         f=self.fixture
-        api=self.audit('hidden-immutable')
-        def restricted(path,*args,**kwargs):
+        for phase in ('preflight','final'):
+            with self.subTest(phase=phase):
+                f.api=owner.LiveFixture()
+                f.state=f.root/('immutable-toctou-'+phase)
+                f.post(f.prepare())
+                if phase=='final':
+                    staged=self.audit('immutable-toctou-final-stage')
+                    with self.assertRaises(evidence.ChallengeReady):self.run_stage('stage',staged)
+                    f.post(f.challenge('final'))
+                    api=self.audit('immutable-toctou-final-publication',
+                        dict(mutation=1,when='delay-before',seconds=1))
+                    stage='finish'
+                else:
+                    api=self.audit('immutable-toctou-preflight-stage',
+                        dict(mutation=1,when='delay-before',seconds=1))
+                    stage='stage'
+                api.sleep=lambda seconds:f.api.immutable.__setitem__('enabled',False)
+                before=list(f.api.writes)
+                with self.assertRaises(ValueError):self.run_stage(stage,api)
+                self.assertEqual(f.api.writes,before)
+
+    def test_ambiguous_immutable_403_denies_both_gates_without_crossing_mutation_boundary(self):
+        f=self.fixture
+        for phase in ('preflight','final'):
+            with self.subTest(phase=phase):
+                f.api=owner.LiveFixture()
+                f.state=f.root/('ambiguous-403-'+phase)
+                f.post(f.prepare())
+                api=self.audit('ambiguous-403-'+phase)
+                if phase=='final':
+                    with self.assertRaises(evidence.ChallengeReady):self.run_stage('stage',api)
+                    f.post(f.challenge('final'))
+                before=list(f.api.writes)
+                def restricted(path,*args,**kwargs):
+                    if path=='/immutable-releases':
+                        raise RuntimeError('GitHub GET failed (HTTP 403); no automatic mutation retry')
+                    return f.api(path,*args,**kwargs)
+                api.call=restricted
+                with self.assertRaises(RuntimeError):
+                    self.run_stage('stage' if phase=='preflight' else 'finish',api)
+                self.assertEqual(f.api.writes,before)
+
+    def test_documented_permission_limit_uses_fresh_owner_attestation_at_both_gates(self):
+        f=self.fixture
+        api=self.audit('owner-attested-immutable')
+        body=b'{"message":"Resource not accessible by integration"}'
+        def restricted(path,method='GET',body_value=None,**kwargs):
             if path=='/immutable-releases':
-                raise RuntimeError('GitHub GET failed (HTTP 403); no automatic mutation retry')
-            return f.api(path,*args,**kwargs)
+                raise promotion.GitHubAPIError('GET',
+                    'https://api.github.com/repos/'+evidence.REPO+path,403,
+                    {'X-Accepted-GitHub-Permissions':'administration=read',
+                     'X-RateLimit-Remaining':'17'},body)
+            return f.api(path,method,body_value,**kwargs)
         api.call=restricted
         self.assertEqual(self.finish(api),'published')
         self.assertTrue(f.api.release['immutable'])
+        observations=[json.loads(row) for row in api.ledger.read_text().splitlines()]
+        owner_attestations=[row for row in observations if row.get('event')=='security-observation'
+            and row.get('observation')=='native-immutable-settings' and row.get('value')=='OWNER_ATTESTED']
+        self.assertGreaterEqual(len(owner_attestations),2)
+
+    def test_permission_limit_does_not_bypass_invalid_owner_signature(self):
+        f=self.fixture
+        challenge=f.prepare()
+        response=f.response(challenge)
+        response['signature']='invalid-signature'
+        f.post(challenge,response)
+        api=self.audit('invalid-signature-permission-limit')
+        body=b'{"message":"Resource not accessible by integration"}'
+        def restricted(path,*args,**kwargs):
+            if path=='/immutable-releases':
+                raise promotion.GitHubAPIError('GET',
+                    'https://api.github.com/repos/'+evidence.REPO+path,403,
+                    {'X-Accepted-GitHub-Permissions':'administration=read',
+                     'X-RateLimit-Remaining':'17'},body)
+            return f.api(path,*args,**kwargs)
+        api.call=restricted
+        before=list(f.api.writes)
+        with self.assertRaises(ValueError):self.run_stage('stage',api)
+        self.assertEqual(f.api.writes,before)
+        self.assertFalse(any(json.loads(row).get('event')=='security-observation'
+            for row in api.ledger.read_text().splitlines()))
 
     def test_visible_bypass_contradiction_denies_both_gates(self):
         f=self.fixture
@@ -506,7 +689,7 @@ class EvidenceTests(unittest.TestCase):
                 self.assertEqual(self.finish(api),'published')
                 for name,value in original.items(): self.assertEqual(f.api.assets[name],value)
                 rows = [json.loads(x) for x in api.ledger.read_text().splitlines()]
-                attempts = [r for r in rows if r['method']!='GET' and r['outcome']=='returned']
+                attempts = [r for r in rows if r.get('method') not in (None,'GET') and r.get('outcome')=='returned']
                 committed = [(r['method'],r['route'],r.get('asset')) for r in attempts]
                 self.assertEqual(len(committed),len(set(committed)))
                 # Before-acceptance retries repeat an attempt, never a committed write.
