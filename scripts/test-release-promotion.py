@@ -20,22 +20,58 @@ from release_promotion import authorize
 
 class FixtureEvidence:
     """Synthetic control transport only; real SSH verification lives in test-owner-evidence."""
-    stage = 'all'
+    def __init__(self, stage='all', stop_at=None, on_gate=None):
+        self.stage, self.stop_at, self.on_gate = stage, stop_at, on_gate
+
     def gate(self, phase, call, binding):
         if call('/immutable-releases').get('enabled') is not True:
             raise ValueError('Native release immutability disabled or missing')
+        if self.on_gate:
+            self.on_gate(phase, call, binding)
+        if phase == self.stop_at:
+            from owner_evidence import ChallengeReady
+            raise ChallengeReady('synthetic challenge boundary')
         return call
+
+    def resume(self, binding):
+        pass
     def fresh(self):
         pass
 
 
-def promote(call, run):
+def promote(call, run, evidence=None):
     from phase_d_capacity import ArtifactWorkspace
     workspace = ArtifactWorkspace(release_promotion.capacity_policy(), parent=Path(__file__).resolve().parents[1])
     try:
-        return release_promotion.promote(call, run, FixtureEvidence(), workspace=workspace)
+        return release_promotion.promote(call, run, evidence or FixtureEvidence(), workspace=workspace)
     finally:
         workspace.close()
+
+
+def promote_scoped(github, run, evidence=None):
+    import phase_d
+    import phase_d_publisher
+    from phase_d_capacity import ArtifactFile, ArtifactWorkspace
+    plan = dict(tag='v' + github.intent['version'], source_sha=run['head_sha'], channel='stable')
+    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as folder:
+        ledger = Path(folder) / 'publisher.jsonl'
+        def backend(path, method='GET', body=None, **kwargs):
+            binary = kwargs.get('binary')
+            if isinstance(binary, ArtifactFile):
+                kwargs['binary'] = binary.read_bytes()
+            return github(path, method, body, **kwargs)
+        audited = phase_d.AuditedTransport(phase_d_publisher.scoped_call(backend, plan), ledger)
+        frozen = phase_d_publisher.FrozenArtifacts(audited)
+        workspace = ArtifactWorkspace(release_promotion.capacity_policy(),
+                                      parent=Path(__file__).resolve().parents[1])
+        try:
+            result = release_promotion.promote(frozen, run, evidence or FixtureEvidence(), workspace=workspace)
+            rows = [json.loads(line) for line in ledger.read_text(encoding='utf-8').splitlines()]
+            github.last_audit_rows = rows
+            return result
+        finally:
+            frozen.close()
+            audited.close()
 
 
 def promote_event(call, event, channel=None):
@@ -79,6 +115,11 @@ class GitHubFixture:
         self.linux_jobs = [{"name": "Linux checks (" + n + ")", "conclusion": "success", "head_sha": SHA}
                            for n in ("Ubuntu", "Arch")]
         self.release = None
+        self.release_sequence = 0
+        self.draft_tag_lookup_404 = False
+        self.release_inventory_pages = None
+        self.numeric_release_mismatch = False
+        self.reads = []
         self.tag = None
         self.assets = {}
         self.archives = {}
@@ -119,13 +160,17 @@ class GitHubFixture:
         return self
 
     def __call__(self, path, method="GET", body=None, **kwargs):
+        if method == 'GET':
+            self.reads.append(path)
         if method != "GET":
             self.writes.append((path, method, body))
             if path == "/git/refs" and method == "POST":
                 self.tag = {"object": {"type": "commit", "sha": body["sha"]}}
                 return self.tag
             if path == "/releases" and method == "POST":
-                self.release = dict(body, id=50, upload_url="https://uploads.github.com/repos/" + REPO + "/releases/50/assets{?name,label}")
+                release_id = 50 + self.release_sequence
+                self.release_sequence += 1
+                self.release = dict(body, id=release_id, upload_url="https://uploads.github.com/repos/" + REPO + f"/releases/{release_id}/assets{{?name,label}}")
                 self.tag = {"object": {"type": "commit", "sha": SHA}}
                 if self.fail_create:
                     self.fail_create = False
@@ -141,7 +186,7 @@ class GitHubFixture:
                                          digest="sha256:" + hashlib.sha256(data).hexdigest(), data=data)
                 if name == self.fail_upload: raise TimeoutError("Upload response lost")
                 return self.assets[name]
-            if path == "/releases/50" and method == "PATCH":
+            if self.release and path == f"/releases/{self.release['id']}" and method == "PATCH":
                 self.release.update(body)
                 self.release['immutable'] = True
                 if self.ambiguous_publish:
@@ -182,17 +227,187 @@ class GitHubFixture:
         if path == "/actions/runs/12/artifacts?per_page=100": return {"artifacts": self.artifacts, "total_count": len(self.artifacts)}
         if path.startswith("/actions/artifacts/"): return self.archives[int(path.split("/")[3])]
         if path in ("/git/ref/tags/v2.3.4", "/git/ref/tags/beta-v2.3.4"): return self.tag
-        if path in ("/releases/tags/v2.3.4", "/releases/tags/beta-v2.3.4"): return self.release
+        if path.startswith("/releases?per_page=100&page="):
+            page = int(path.rsplit("=", 1)[1])
+            if self.release_inventory_pages is not None:
+                return self.release_inventory_pages.get(page, [])
+            return [self.release_view()] if page == 1 and self.release else []
+        if path in ("/releases/tags/v2.3.4", "/releases/tags/beta-v2.3.4"):
+            if self.draft_tag_lookup_404 and self.release and self.release["draft"]: return None
+            return self.release_view() if self.release else None
         if path == "/releases/latest": return {"tag_name": "v2.3.3"}
-        if path == "/releases/50/assets": return list(self.assets.values())
-        if path == '/releases/50': return self.release
+        if self.release and path == f"/releases/{self.release['id']}/assets": return [self.asset_metadata(a) for a in self.assets.values()]
+        if self.release and path == f"/releases/{self.release['id']}":
+            result = self.release_view()
+            if self.numeric_release_mismatch: result['id'] += 1
+            return result
         if path == '/immutable-releases': return self.immutable
         if path.startswith("/releases/assets/"):
             return next(a["data"] for a in self.assets.values() if a["id"] == int(path.split("/")[-1]))
         raise AssertionError(path)
 
+    @staticmethod
+    def asset_metadata(asset):
+        return {key: asset[key] for key in ('id', 'name', 'size', 'digest')} | {'state': 'uploaded'}
+
+    def release_view(self):
+        return dict(self.release, assets=[self.asset_metadata(a) for a in self.assets.values()])
+
 
 class PromotionTests(unittest.TestCase):
+    def test_unpublished_draft_is_recovered_when_tag_endpoint_returns_404(self):
+        github = GitHubFixture().with_intent()
+        github.fail_upload = 'rolauncher-v2.3.4-linux-x64.tar.gz'
+        with self.assertRaises(TimeoutError): promote(github, github.run)
+        original_assets = copy.deepcopy(github.assets)
+        self.assertTrue(github.release['draft'])
+
+        github.fail_upload = None
+        github.draft_tag_lookup_404 = True
+        github.writes.clear()
+        self.assertEqual(promote_scoped(github, github.run), 'published')
+
+        self.assertFalse(any(path == '/releases' and method == 'POST' for path, method, _ in github.writes))
+        self.assertEqual(github.release_sequence, 1)
+        uploaded_names = [path.rsplit('=', 1)[1] for path, method, _ in github.writes
+                          if method == 'POST' and path.startswith('https://uploads.github.com/')]
+        self.assertEqual(set(uploaded_names), {
+            'release-promotion.json','rolauncher-v2.3.4-linux-x64.tar.gz',
+            'rolauncher-v2.3.4-setup-x64.exe','rolauncher-v2.3.4-SHA256SUMS.txt',
+            'rolauncher-v2.3.4-source.zip','rolauncher-v2.3.4-windows-x64.zip'} - set(original_assets))
+        for name, asset in original_assets.items():
+            self.assertEqual(github.assets[name]['id'], asset['id'])
+            self.assertEqual(github.assets[name]['digest'], asset['digest'])
+        self.assertNotIn('/releases/tags/v2.3.4', github.reads)
+        admissions = [row for row in github.last_audit_rows if row.get('event') == 'release-id-authorized']
+        self.assertTrue(admissions)
+        self.assertTrue(all(row['release_id'] == 50 and row['draft'] for row in admissions))
+        self.assertNotIn('GITHUB_TOKEN', json.dumps(github.last_audit_rows))
+
+    def test_release_inventory_paginates_without_using_page_order_for_selection(self):
+        from release_promotion import release_inventory
+        releases = [dict(id=i + 1, tag_name=f'other-v{i}', target_commitish=SHA, draft=True,
+                         prerelease=False, body='', assets=[]) for i in range(101)]
+        pages = {1: releases[:100], 2: releases[100:], 3: []}
+        seen = []
+        def call(path, *args, **kwargs):
+            seen.append(path)
+            return pages[int(path.rsplit('=', 1)[1])]
+        result = release_inventory(call)
+        self.assertEqual(len(result), 101)
+        self.assertEqual(seen.count('/releases?per_page=100&page=1'), 2)
+        self.assertEqual(seen.count('/releases?per_page=100&page=2'), 2)
+        self.assertEqual(seen.count('/releases?per_page=100&page=3'), 2)
+
+    def test_release_inventory_rejects_inconsistent_pagination_and_truncation(self):
+        from release_promotion import release_inventory
+        release = dict(id=1, tag_name='v2.3.4', target_commitish=SHA, draft=True,
+                       prerelease=False, body='marker', assets=[])
+        for pages in ({1: [release], 2: [dict(release, id=2)]},
+                      {1: [release], 2: None}):
+            with self.subTest(pages=pages), self.assertRaises(ValueError):
+                release_inventory(lambda path, *a, **k: pages.get(int(path.rsplit('=', 1)[1]), []))
+
+    def test_release_inventory_rejects_changes_between_complete_reads(self):
+        from release_promotion import release_inventory
+        release = dict(id=1, tag_name='unrelated', target_commitish=SHA, draft=True,
+                       prerelease=False, body='', assets=[])
+        counts = {}
+        def changing(path, *args, **kwargs):
+            page = int(path.rsplit('=', 1)[1])
+            counts[page] = counts.get(page, 0) + 1
+            if page == 1 and counts[page] == 2:
+                return [release]
+            return []
+        with self.assertRaisesRegex(ValueError, 'changed between paginated reads'):
+            release_inventory(changing)
+
+    def test_release_inventory_fails_when_page_bound_is_reached(self):
+        from release_promotion import MAX_RELEASE_PAGES, RELEASE_PAGE_SIZE, release_inventory
+        calls = []
+        def unbounded(path, *args, **kwargs):
+            calls.append(path)
+            page_number = int(path.rsplit('=', 1)[1])
+            return [dict(id=(page_number - 1) * RELEASE_PAGE_SIZE + i + 1,
+                         tag_name=f'unrelated-{page_number}-{i}', target_commitish=SHA,
+                         draft=True, prerelease=False, body='', assets=[])
+                    for i in range(RELEASE_PAGE_SIZE)]
+        with self.assertRaisesRegex(ValueError, 'bounded page limit'):
+            release_inventory(unbounded)
+        self.assertEqual(len(calls), MAX_RELEASE_PAGES)
+
+    def test_duplicate_drafts_for_tag_fail_closed_before_mutation(self):
+        github = GitHubFixture().with_intent()
+        from owner_evidence import ChallengeReady
+        with self.assertRaises(ChallengeReady): promote(github, github.run, FixtureEvidence(stop_at='final'))
+        full = github.release_view()
+        original = dict(full, id=49, assets=[a for a in full['assets'] if a['name']=='release-promotion.json'])
+        duplicate = dict(full, id=51)
+        github.release_inventory_pages = {1: [original, duplicate]}
+        github.writes.clear()
+        with self.assertRaisesRegex(ValueError, 'Multiple Releases'):
+            promote(github, github.run)
+        self.assertEqual(github.writes, [])
+
+    def test_existing_draft_with_wrong_source_marker_or_asset_is_quarantined(self):
+        for fault in ('source', 'marker', 'asset'):
+            with self.subTest(fault=fault):
+                github = GitHubFixture().with_intent()
+                github.fail_upload = 'rolauncher-v2.3.4-linux-x64.tar.gz'
+                with self.assertRaises(TimeoutError): promote(github, github.run)
+                if fault == 'source': github.release['target_commitish'] = 'b' * 40
+                if fault == 'marker': github.release['body'] = 'wrong marker'
+                if fault == 'asset': github.assets['release-promotion.json']['digest'] = 'sha256:' + '0' * 64
+                github.writes.clear()
+                with self.assertRaises(ValueError): promote(github, github.run)
+                self.assertEqual(github.writes, [])
+
+    def test_numeric_release_id_mismatch_fails_before_mutation(self):
+        github = GitHubFixture().with_intent()
+        github.fail_upload = 'rolauncher-v2.3.4-linux-x64.tar.gz'
+        with self.assertRaises(TimeoutError): promote(github, github.run)
+        github.numeric_release_mismatch = True
+        github.writes.clear()
+        with self.assertRaisesRegex(ValueError, 'Numeric Release-ID'):
+            promote(github, github.run)
+        self.assertEqual(github.writes, [])
+
+    def test_complete_existing_draft_finishes_without_asset_uploads(self):
+        from owner_evidence import ChallengeReady
+        github = GitHubFixture().with_intent()
+        with self.assertRaises(ChallengeReady):
+            promote(github, github.run, FixtureEvidence(stop_at='final'))
+        self.assertEqual(set(github.assets), {'release-promotion.json',
+            'rolauncher-v2.3.4-SHA256SUMS.txt','rolauncher-v2.3.4-setup-x64.exe',
+            'rolauncher-v2.3.4-windows-x64.zip','rolauncher-v2.3.4-source.zip',
+            'rolauncher-v2.3.4-linux-x64.tar.gz'})
+        github.draft_tag_lookup_404 = True
+        github.writes.clear()
+        self.assertEqual(promote(github, github.run, FixtureEvidence(stage='finish')), 'published')
+        self.assertFalse(any(path.startswith('https://uploads.github.com/') for path, _, _ in github.writes))
+        self.assertEqual(github.release_sequence, 1)
+
+    def test_draft_appearing_after_preflight_admission_aborts_before_mutation(self):
+        github = GitHubFixture().with_intent()
+        self.assertEqual(promote(github, github.run), 'published')
+        saved_release = copy.deepcopy(github.release)
+        saved_assets = copy.deepcopy(github.assets)
+        saved_tag = copy.deepcopy(github.tag)
+        github.release = None
+        github.assets = {}
+        github.tag = None
+        github.release_sequence = 0
+        github.writes.clear()
+
+        def race(phase, call, binding):
+            if phase == 'preflight':
+                github.release = dict(saved_release, draft=True, immutable=False)
+                github.assets = copy.deepcopy(saved_assets)
+                github.tag = saved_tag
+        with self.assertRaisesRegex(ValueError, 'different receipt marker|changed during preflight'):
+            promote(github, github.run, FixtureEvidence(on_gate=race))
+        self.assertEqual(github.writes, [])
+
     def test_zip_directory_metadata_is_bounded_before_parsing_entries(self):
         github = GitHubFixture().with_intent()
         with zipfile.ZipFile(io.BytesIO(github.archives[30])) as original:
@@ -321,7 +536,9 @@ class PromotionTests(unittest.TestCase):
                     kwargs["binary"] = binary.read_bytes()
                 return github(path, method, body, **kwargs)
 
-            audited = phase_d.AuditedTransport(backend, ledger)
+            plan = dict(tag='v2.3.4', source_sha=SHA, channel='stable')
+            scoped = phase_d_publisher.scoped_call(backend, plan)
+            audited = phase_d.AuditedTransport(scoped, ledger)
             try:
                 call = phase_d_publisher.FrozenArtifacts(audited)
                 self.assertEqual(promote(call, github.run), "published")
@@ -533,9 +750,11 @@ class PromotionTests(unittest.TestCase):
                 github.ambiguous_publish = fault == "publish"
                 with self.assertRaises(TimeoutError): promote(github, github.run)
                 github.fail_upload = None
+                github.draft_tag_lookup_404 = fault != 'publish'
                 github.writes.clear()
                 self.assertEqual(promote(github, github.run), "consumed" if fault == "publish" else "published")
                 self.assertFalse(github.release["draft"])
+                self.assertEqual(github.release_sequence, 1)
                 self.assertFalse(any(method == "DELETE" or path == "/releases" for path, method, _ in github.writes))
 
     def test_conflicting_interrupted_draft_is_quarantined(self):

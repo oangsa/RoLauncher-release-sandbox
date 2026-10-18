@@ -139,6 +139,16 @@ class AuditedTransport:
         self.record(dict(event='security-observation', observation='native-immutable-settings',
                          value=visibility, observed_ns=self.clock()))
 
+    def authorize_release(self, release):
+        authorizer = getattr(self.call, 'authorize_release', None)
+        if not callable(authorizer):
+            return
+        authorizer(release)
+        self.record(dict(event='release-id-authorized', release_id=release['id'],
+                         tag=release['tag_name'], source=release['target_commitish'],
+                         draft=release['draft'], asset_count=len(release['assets']),
+                         observed_ns=self.clock()))
+
     def record(self, row):
         promotion.require(self.events < self.max_events, 'Mutation ledger limit')
         self.stream.write(json.dumps(row, sort_keys=True, separators=(',', ':')) + '\n')

@@ -31,6 +31,6 @@ Fresh evidence remains bound to source, workflow run, attempt, phase and challen
 - Separate review and authorization for publisher activation, operational attendance, synthetic intents/tags/releases and mutation/fault tests.
 - Demonstrated Windows-to-Ubuntu signing acceptance, real runner metadata visibility, large-upload recovery and native immutable release behavior.
 
-Main's Publisher remains hard-disabled until a separately approved activation is promoted there. The reviewed dev proposal removes its literal hard-disable but requires both `RELEASE_PROMOTION_ENABLED` and `PHASE_D_LIVE_AUTHORIZED`; Beta and historical PoC remain hard-disabled.
-Live repository variable state is `VARIABLE_STATE_NOT_VERIFIED`; do not assume either flag or the operation plan's value. No release intent, signed evidence, tag, draft or Release is authorized by enrollment; Production remains read-only.
+The Publisher workflow requires both `RELEASE_PROMOTION_ENABLED` and `PHASE_D_LIVE_AUTHORIZED`. Live repository variable and operation-plan state is `VARIABLE_STATE_NOT_VERIFIED`; do not infer that the workflow is operationally disabled or authorized.
+The v0.0.900 intent and two unpublished same-tag drafts exist in the sandbox, but enrollment did not authorize their publication. No signed evidence or Release publication is authorized by enrollment; Production remains read-only.
 The [lifecycle validation plan](SANDBOX-RELEASE-LIFECYCLE.md) remains future work under separate approval.
