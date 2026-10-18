@@ -1,12 +1,14 @@
 """Trusted release-intent to promotion boundary. Candidate code is never executed."""
 import base64
 import hashlib
+import http.client
 import io
 import json
 import os
 from pathlib import Path
 import re
 import struct
+import ssl
 import tempfile
 import tomllib
 from urllib.error import HTTPError
@@ -14,6 +16,7 @@ from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
 import zipfile
+from phase_d_capacity import ArtifactFile, ArtifactWorkspace, CapacityPolicy, DEFAULT_CAPACITY
 from release_files import checked_files
 
 REPO = "oangsa/RoLauncher-release-sandbox"
@@ -32,6 +35,13 @@ MAX_CHECKSUM_BYTES = 1024 * 1024
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_HTTP_ERROR_BODY_BYTES = 16 * 1024
 COPY_BYTES = 1024 * 1024
+
+
+def capacity_policy():
+    """Operational policy from immutable code constants; never selected by remote input."""
+    return CapacityPolicy(MAX_ARCHIVE_BYTES, MAX_ENTRY_BYTES, MAX_EXPANDED_BYTES,
+                          2 * MAX_ARCHIVE_BYTES + MAX_EXPANDED_BYTES,
+                          max_buffer_bytes=COPY_BYTES)
 
 
 def require(condition, message):
@@ -175,6 +185,95 @@ def protected_branches(call, strict=False):
             require("creation" in types, "Historical beta workflows require restricted tag creation")
 
 
+def _archive_footer(path, expected_count, policy):
+    size_on_disk = path.stat().st_size
+    with path.open("rb") as source:
+        source.seek(max(0, size_on_disk - 65_557))
+        tail = source.read(65_557)
+        end = tail.rfind(b"PK\x05\x06")
+        require(end >= 0 and end + 22 <= len(tail), "Invalid ZIP directory footer")
+        disk, directory_disk, local_count, count, directory_size, offset, comment = struct.unpack_from("<4H2IH", tail, end + 4)
+        absolute_end = size_on_disk - len(tail) + end
+        source.seek(max(0, absolute_end - 20))
+        zip64_locator = source.read(4) == b"PK\x06\x07"
+    require(disk == directory_disk == 0 and local_count == count == expected_count
+            and count <= policy.max_archive_entries and directory_size <= policy.max_directory_bytes
+            and offset + directory_size == absolute_end and end + 22 + comment == len(tail)
+            and not zip64_locator,
+            "ZIP directory limit exceeded or unsupported split/ZIP64 archive")
+
+
+def _artifact_files(call, run, version, beta, workspace):
+    result = call(f'/actions/runs/{run["id"]}/artifacts?per_page=100')
+    require(result["total_count"] == len(result["artifacts"]) and len(result["artifacts"]) < 100,
+            "Incomplete artifact evidence")
+    prefix = "rolauncher-v" + version
+    layouts = {"beta-windows" if beta else "release-files": {prefix + s for s in ("-setup-x64.exe", "-windows-x64.zip", "-source.zip", "-SHA256SUMS.txt")},
+               "beta-linux" if beta else "release-linux-files": {prefix + s for s in ("-linux-x64.tar.gz", "-linux-SHA256SUMS.txt")}}
+    layouts = {f'{name}-attempt-{run["run_attempt"]}': entries for name, entries in layouts.items()}
+    policy = workspace.policy
+    provenance = []
+    for name, expected in layouts.items():
+        workspace.check_deadline()
+        matches = [a for a in result["artifacts"] if a["name"] == name]
+        require(len(matches) == 1, "Missing or ambiguous artifact: " + name)
+        artifact = matches[0]
+        require(not artifact["expired"] and artifact["workflow_run"]["id"] == run["id"]
+                and artifact["workflow_run"]["head_sha"] == run["head_sha"], "Wrong artifact source or expired artifact")
+        require(type(artifact.get("size_in_bytes")) is int and 0 < artifact["size_in_bytes"] <= policy.max_archive_bytes,
+                "Artifact archive metadata exceeds size limit")
+        archive_path = f'/actions/artifacts/{artifact["id"]}/zip'
+        archive_file = workspace.download(call, archive_path, f'artifact-{artifact["id"]}.zip',
+                                          policy.max_archive_bytes, "archive")
+        require(archive_file.path.is_file() and archive_file.path.stat().st_size == archive_file.size
+                and archive_file.size <= policy.max_archive_bytes, "Downloaded archive exceeds size limit")
+        require(artifact["size_in_bytes"] == archive_file.size
+                and artifact.get("digest") == "sha256:" + archive_file.sha256, "Artifact archive digest mismatch")
+        _archive_footer(archive_file.path, len(expected), policy)
+        workspace.archives[archive_path] = archive_file
+        workspace.open_archive()
+        try:
+            with zipfile.ZipFile(archive_file.path) as archive:
+                entries = archive.infolist()
+                names = [entry.filename for entry in entries]
+                require(len(entries) == len(expected) and len(set(names)) == len(names)
+                        and len({value.casefold() for value in names}) == len(names)
+                        and set(names) == expected, "Unexpected artifact archive entries")
+                require(workspace.expanded_bytes + sum(entry.file_size for entry in entries)
+                        <= policy.max_expanded_bytes, "Aggregate decompression size limit exceeded")
+                for entry in entries:
+                    workspace.check_deadline()
+                    require(entry.filename.count("/") + entry.filename.count("\\") + 1
+                            <= policy.max_extraction_depth and "/" not in entry.filename
+                            and "\\" not in entry.filename, "Artifact entry extraction depth")
+                    limit = min(policy.max_entry_bytes, MAX_CHECKSUM_BYTES) if entry.filename.endswith("SHA256SUMS.txt") else policy.max_entry_bytes
+                    require(entry.file_size <= limit, "Artifact entry size limit exceeded")
+                    require(entry.external_attr >> 16 & 0o170000 != 0o120000
+                            and not entry.flag_bits & 1
+                            and entry.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED),
+                            "Symlink, encrypted or unsupported artifact")
+                    sink = workspace.sink(entry.filename, limit, "expanded")
+                    written = 0
+                    try:
+                        with archive.open(entry) as source:
+                            while chunk := source.read(policy.max_buffer_bytes):
+                                written += sink.write(chunk)
+                        require(written == entry.file_size, "Artifact entry size mismatch")
+                        sink.finish()
+                    except BaseException:
+                        sink.abort()
+                        raise
+        finally:
+            workspace.close_archive()
+        provenance.append({k: artifact[k] for k in ("id", "name", "digest")})
+    checked = checked_files(workspace.root, version)
+    files = {name: workspace.files.get(value, value) if isinstance(value, Path) else value
+             for name, value in checked.items()}
+    workspace.release_files = files
+    workspace.provenance = provenance
+    return files, provenance
+
+
 def artifact_files(call, run, version, beta=False):
     result = call(f'/actions/runs/{run["id"]}/artifacts?per_page=100')
     require(result["total_count"] == len(result["artifacts"]) and len(result["artifacts"]) < 100,
@@ -197,7 +296,6 @@ def artifact_files(call, run, version, beta=False):
             archive_data = call(f'/actions/artifacts/{artifact["id"]}/zip', raw=True)
             require(len(archive_data) <= MAX_ARCHIVE_BYTES, "Downloaded archive exceeds size limit")
             require(artifact.get("digest") == "sha256:" + hashlib.sha256(archive_data).hexdigest(), "Artifact archive digest mismatch")
-            # Bound the central directory before ZipFile allocates one object per entry.
             end = archive_data.rfind(b"PK\x05\x06", max(0, len(archive_data) - 65_557))
             require(end >= 0 and end + 22 <= len(archive_data), "Invalid ZIP directory footer")
             disk, directory_disk, local_count, count, size, offset, comment = struct.unpack_from("<4H2IH", archive_data, end + 4)
@@ -217,7 +315,6 @@ def artifact_files(call, run, version, beta=False):
                     require(entry.external_attr >> 16 & 0o170000 != 0o120000
                             and not entry.flag_bits & 1 and entry.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED),
                             "Symlink, encrypted or unsupported artifact")
-                    # Fixed allowlist basenames only; never extract attacker-selected paths.
                     written = 0
                     with archive.open(entry) as source, (Path(temp) / entry.filename).open("wb") as target:
                         while chunk := source.read(COPY_BYTES):
@@ -234,6 +331,19 @@ def artifact_files(call, run, version, beta=False):
     return files, provenance
 
 
+def staged_artifact_files(call, run, version, beta, workspace):
+    """Production parser path; retains large assets as files through publication."""
+    require(isinstance(workspace, ArtifactWorkspace), "A bounded artifact workspace is required")
+    return _artifact_files(call, run, version, beta, workspace)
+
+
+def file_identity(value):
+    if isinstance(value, ArtifactFile):
+        return value.verify(COPY_BYTES)
+    require(isinstance(value, bytes), "Release file is not staged")
+    return len(value), hashlib.sha256(value).hexdigest()
+
+
 def promotion_state(call, tag, sha, annotated=False):
     ref = call("/git/ref/tags/" + tag, missing_ok=True)
     if ref:
@@ -245,7 +355,28 @@ def promotion_state(call, tag, sha, annotated=False):
     return ref
 
 
-def promote(call, run, evidence=None):
+def promote(call, run, evidence=None, workspace=None):
+    bound_workspace = getattr(call, "workspace", None)
+    require(workspace is None or bound_workspace is None or workspace is bound_workspace,
+            "Artifact workspace changed")
+    workspace = workspace or bound_workspace
+    owns_workspace = workspace is None
+    if owns_workspace:
+        workspace = ArtifactWorkspace(capacity_policy())
+    try:
+        require(workspace.policy == capacity_policy(),
+                "Live promotion requires the immutable operational capacity policy")
+        if callable(getattr(call, "bind_workspace", None)):
+            call.bind_workspace(workspace)
+        if evidence is not None:
+            evidence.workspace = workspace
+        return _promote(call, run, evidence, workspace)
+    finally:
+        if owns_workspace:
+            workspace.close()
+
+
+def _promote(call, run, evidence, workspace):
     intent = authorize(call, run)
     if intent is None:
         return "no-intent"
@@ -272,13 +403,18 @@ def promote(call, run, evidence=None):
     notes = content(call, f"docs/RELEASE-{version}.md", sha)
     require(notes.startswith(f"# RoLauncher {version}\n") and len(notes.strip()) > 120
             and "Describe the user-visible changes" not in notes, "Release notes mismatch")
-    files, artifacts = artifact_files(call, run, version, beta)
+    files, artifacts = staged_artifact_files(call, run, version, beta, workspace)
     if intent.get('source') == 'hotfix':
-        from hotfix_policy import verify_source
-        verify_source(call, sha, files[f'rolauncher-v{version}-source.zip'])
+        source_file = files[f'rolauncher-v{version}-source.zip']
+        if isinstance(source_file, ArtifactFile):
+            from hotfix_policy import verify_source_file
+            verify_source_file(call, sha, source_file)
+        else:
+            from hotfix_policy import verify_source
+            verify_source(call, sha, source_file)
     receipt = dict(schema=1, intent=intent["id"], channel=intent["channel"], version=version, source=sha,
                    run=run["id"], attempt=run["run_attempt"], artifacts=artifacts,
-                   files={n: hashlib.sha256(data).hexdigest() for n, data in sorted(files.items())})
+                   files={n: file_identity(data)[1] for n, data in sorted(files.items())})
     receipt_data = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
     marker = "<!-- release-promotion:" + hashlib.sha256(receipt_data).hexdigest() + " -->"
     files["release-promotion.json"] = receipt_data
@@ -329,7 +465,8 @@ def promote(call, run, evidence=None):
     require(len({a["name"] for a in assets}) == len(assets) and {a["name"] for a in assets} <= set(files), "Unexpected release assets")
     for asset in assets:
         data = files[asset["name"]]
-        require(asset["size"] == len(data) and asset.get("digest") == "sha256:" + hashlib.sha256(data).hexdigest(),
+        size, digest = file_identity(data)
+        require(asset["size"] == size and asset.get("digest") == "sha256:" + digest,
                 "Existing release asset differs; quarantine instead of replacing")
     existing = {a["name"] for a in assets}
     if not release["draft"] or finishing:
@@ -344,7 +481,8 @@ def promote(call, run, evidence=None):
     require(len(uploaded) == len(files) and {a["name"] for a in uploaded} == set(files), "Incomplete uploaded assets")
     for asset in uploaded:
         data = files[asset["name"]]
-        require(asset["size"] == len(data) and asset.get("digest") == "sha256:" + hashlib.sha256(data).hexdigest(), "Uploaded asset digest mismatch")
+        size, digest = file_identity(data)
+        require(asset["size"] == size and asset.get("digest") == "sha256:" + digest, "Uploaded asset digest mismatch")
     require(promotion_state(call, tag, sha, annotated=beta), "Version tag disappeared")
     if not beta:
         require(call("/branches/main")["commit"]["sha"] == sha, "Main advanced before publication")
@@ -471,12 +609,61 @@ class GitHubAPIError(RuntimeError):
 
 def github_api(token, observer=None):
     opener = build_opener(SafeRedirect())
-    def call(path, method="GET", body=None, missing_ok=False, binary=None, raw=False):
+    def stream_upload(url, method, artifact, headers, missing_ok=False):
+        size, expected_digest = artifact.verify(COPY_BYTES)
+        require(size <= MAX_ENTRY_BYTES, "Upload asset size limit exceeded")
+        parsed = urlparse(url)
+        target = parsed.path + ("?" + parsed.query if parsed.query else "")
+        connection = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443,
+                                                  timeout=120, context=ssl.create_default_context())
+        try:
+            connection.putrequest(method, target)
+            for key, value in headers.items():
+                connection.putheader(key, value)
+            connection.putheader("Content-Length", str(size))
+            connection.putheader("Content-Type", "application/octet-stream")
+            connection.endheaders()
+            actual = hashlib.sha256()
+            sent = 0
+            with artifact.open() as source:
+                while chunk := source.read(COPY_BYTES):
+                    connection.send(chunk)
+                    sent += len(chunk)
+                    actual.update(chunk)
+            require(sent == size and actual.hexdigest() == expected_digest,
+                    "Staged asset changed during upload")
+            response = connection.getresponse()
+            if observer is not None:
+                observer(getattr(response, "status", None))
+            if 300 <= response.status < 400:
+                raise GitHubAPIError(method, url, response.status, response.headers, None)
+            length = response.headers.get("Content-Length")
+            require(length is None or 0 <= int(length) <= MAX_JSON_BYTES,
+                    "GitHub response Content-Length exceeds size limit")
+            result = response.read(MAX_JSON_BYTES + 1)
+            require(len(result) <= MAX_JSON_BYTES, "GitHub response exceeds size limit")
+            if response.status >= 400:
+                error_body = result if len(result) <= MAX_HTTP_ERROR_BODY_BYTES else None
+                if response.status == 404 and missing_ok:
+                    return None
+                raise GitHubAPIError(method, url, response.status, response.headers, error_body)
+            return json.loads(result, object_pairs_hook=unique_object) if result else None
+        except http.client.HTTPException as error:
+            raise OSError("GitHub upload connection failed") from error
+        finally:
+            connection.close()
+
+    def call(path, method="GET", body=None, missing_ok=False, binary=None, raw=False, sink=None):
         url = path if path.startswith("https://") else "https://api.github.com/repos/" + REPO + path
         checked_url(url)
-        data = binary if binary is not None else json.dumps(body).encode() if body is not None else None
         headers = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
                    "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "RoLauncher-protected-promotion"}
+        if isinstance(binary, ArtifactFile):
+            require(method == "POST" and not raw and sink is None, "File uploads are limited to release asset POSTs")
+            return stream_upload(url, method, binary, headers, missing_ok)
+        require(binary is None or isinstance(binary, bytes), "Unsupported upload body")
+        require(sink is None or raw, "Download sink is valid only for raw artifact bytes")
+        data = binary if binary is not None else json.dumps(body).encode() if body is not None else None
         if data is not None:
             headers["Content-Type"] = "application/octet-stream" if binary is not None else "application/json"
         try:
@@ -485,9 +672,13 @@ def github_api(token, observer=None):
                     require(response.geturl() == url, "Unexpected GitHub API redirect")
                 if observer is not None:
                     observer(getattr(response, 'status', None))
-                limit = MAX_ARCHIVE_BYTES if raw else MAX_JSON_BYTES
+                limit = min(MAX_ARCHIVE_BYTES, sink.max_bytes) if raw and sink is not None else MAX_ARCHIVE_BYTES if raw else MAX_JSON_BYTES
                 length = response.headers.get("Content-Length")
                 require(length is None or 0 <= int(length) <= limit, "GitHub response Content-Length exceeds size limit")
+                if raw and sink is not None:
+                    while chunk := response.read(sink.workspace.policy.max_buffer_bytes):
+                        sink.write(chunk)
+                    return None
                 result = response.read(limit + 1)
                 require(len(result) <= limit, "GitHub response exceeds size limit")
                 return result if raw else json.loads(result, object_pairs_hook=unique_object) if result else None

@@ -7,6 +7,7 @@ import re
 import time
 from urllib.parse import urlparse, parse_qs
 
+from phase_d_capacity import ArtifactFile
 import release_promotion as promotion
 import owner_evidence as evidence
 
@@ -167,7 +168,16 @@ class AuditedTransport:
                     'Unapproved upload name')
                 row['asset'] = query['name'][0]
             digest = hashlib.sha256((method + '\n' + url + '\n').encode())
-            digest.update(kwargs.get('binary') or json.dumps(body, sort_keys=True).encode())
+            binary=kwargs.get('binary')
+            if isinstance(binary,ArtifactFile):
+                promotion.require(binary.path.is_file() and binary.path.stat().st_size==binary.size,
+                                  'Staged audit asset changed')
+                digest.update(f'file:{binary.size}:{binary.sha256}'.encode())
+            elif binary is not None:
+                promotion.require(isinstance(binary,bytes),'Unsupported audited upload body')
+                digest.update(binary)
+            else:
+                digest.update(json.dumps(body, sort_keys=True).encode())
             identity = digest.hexdigest()
             row['duplicate_attempt'] = identity in self.seen
             self.seen.add(identity)

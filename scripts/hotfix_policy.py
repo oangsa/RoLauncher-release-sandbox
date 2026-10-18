@@ -6,6 +6,7 @@ import re
 import struct
 import tomllib
 import zipfile
+from phase_d_capacity import ArtifactFile
 
 GOVERNANCE_PATHS = {
     '.github/workflows/ci-release.yml', '.github/workflows/linux.yml',
@@ -61,6 +62,54 @@ def verify_source(call, sha, data):
                     require(count <= entry.file_size, 'Source entry exceeds declared size')
                     digest.update(chunk)
             require(count == entry.file_size and digest.hexdigest() == expected[entry.filename], 'Source blob SHA mismatch')
+
+
+def verify_source_file(call, sha, data):
+    """Stream a verified file-backed source ZIP against the exact tracked tree."""
+    require(isinstance(data, ArtifactFile), 'Source archive must be a verified staged file')
+    tree = call(f'/git/trees/{sha}?recursive=1')
+    require(tree['truncated'] is False and 0 < len(tree['tree']) < 5000, 'Incomplete source tree evidence')
+    expected = {e['path']: e['sha'] for e in tree['tree'] if e['type'] == 'blob' and e['mode'] in ('100644', '100755')}
+    require(all(e['type'] == 'tree' or (e['type'] == 'blob' and e['mode'] in ('100644', '100755')) for e in tree['tree']),
+            'Unsupported source submodule or symlink')
+    total_size, _ = data.verify()
+    with data.path.open('rb') as source:
+        source.seek(max(0, total_size - 65557))
+        tail = source.read(65557)
+        end = tail.rfind(b'PK\x05\x06')
+        require(end >= 0 and end + 22 <= len(tail), 'Invalid source ZIP footer')
+        disk, directory_disk, local_count, count, directory_size, offset, comment = struct.unpack_from(
+            '<4H2IH', tail, end + 4)
+        absolute_end = total_size - len(tail) + end
+        source.seek(max(0, absolute_end - 20))
+        zip64_locator = source.read(4) == b'PK\x06\x07'
+    require(disk == directory_disk == 0 and local_count == count and 0 < count < 5000
+            and directory_size <= 2 * 1024 * 1024 and offset + directory_size == absolute_end
+            and end + 22 + comment == len(tail) and not zip64_locator,
+            'Source ZIP directory budget exceeded')
+    with zipfile.ZipFile(data.path) as archive:
+        entries = archive.infolist()
+        names = [entry.filename for entry in entries if not entry.is_dir()]
+        require(len(entries) == count and len(names) == len(set(names)) and set(names) == set(expected),
+                'Source ZIP inventory differs from exact commit')
+        require(sum(entry.file_size for entry in entries) <= 256 * 1024 * 1024,
+                'Source expansion budget exceeded')
+        for entry in entries:
+            require(entry.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                    and not entry.flag_bits & 1 and entry.external_attr >> 16 & 0o170000 != 0o120000,
+                    'Unsupported source ZIP entry')
+            if entry.is_dir():
+                require(entry.file_size == 0, 'Source directory has payload')
+                continue
+            digest = hashlib.sha1(b'blob ' + str(entry.file_size).encode() + b'\0')
+            actual_size = 0
+            with archive.open(entry) as source:
+                while chunk := source.read(1024 * 1024):
+                    actual_size += len(chunk)
+                    require(actual_size <= entry.file_size, 'Source entry exceeds declared size')
+                    digest.update(chunk)
+            require(actual_size == entry.file_size and digest.hexdigest() == expected[entry.filename],
+                    'Source blob SHA mismatch')
 
 
 def patch_report(result, base, head, governance=False):
