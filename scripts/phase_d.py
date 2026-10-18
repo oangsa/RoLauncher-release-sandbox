@@ -27,7 +27,7 @@ def verify_canonical(response, challenge, consumed, policy_path=evidence.POLICY,
 
 
 class PhaseDEvidence(evidence.StagedEvidence):
-    """Add strict wire canonicalization without changing pinned Architecture C code."""
+    """Harden accepted Architecture C evidence without changing pinned authority."""
     def gate(self, phase, call, binding):
         path = self.state / phase / 'challenge.json'
         challenge = evidence.parse(path.read_bytes()) if path.exists() else None
@@ -45,7 +45,38 @@ class PhaseDEvidence(evidence.StagedEvidence):
                         evidence.require(evidence.canonical(wrapper).decode()==comment['body'],'Noncanonical evidence wrapper')
                         canonical_payload(wrapper.get('response'))
             return value
-        return super().gate(phase, canonical_call, binding)
+        controls = super().gate(phase, canonical_call, binding)
+        # Only retain controls after the original signature, digest and gate pass.
+        wrapper = evidence.parse((self.state / (phase + '-response.json')).read_bytes())
+        self.live_controls = (call, canonical_payload(wrapper['response'])['controls'])
+        self.fresh()
+        return controls
+
+    def fresh(self):
+        super().fresh()
+        if hasattr(self, 'live_controls'):
+            call, snapshot = self.live_controls
+            by_id = {r['id']: r for r in snapshot['rulesets']}
+            def observed(path):
+                value = call(path)
+                match = re.fullmatch(r'/rulesets/([1-9][0-9]*)', path)
+                if match and 'bypass_actors' in value:
+                    evidence.require(evidence.canonical(value['bypass_actors']) ==
+                        evidence.canonical(by_id[int(match[1])]['bypass_actors']),
+                        'Live bypass array contradicts signed evidence')
+                return value
+            promotion.protected_branches(evidence.controls_call(observed, snapshot), strict=True)
+            try:
+                immutable = call('/immutable-releases')
+            except RuntimeError as error:
+                # Exact github_api permission denial only. 404 can mean disabled;
+                # network failures, malformed replies and other errors stay fatal.
+                if str(error) != 'GitHub GET failed (HTTP 403); no automatic mutation retry':
+                    raise
+            else:
+                evidence.require(evidence.canonical(evidence.project(immutable, ('enabled', 'enforced_by_owner')))
+                    == evidence.canonical(snapshot['immutable']), 'Live immutable settings contradict signed evidence')
+        evidence.require(int(time.time()) <= self.expires, 'Evidence expired during live controls recheck')
 
 
 def validated_fault(value):
