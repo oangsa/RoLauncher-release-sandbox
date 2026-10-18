@@ -28,6 +28,10 @@ def verify_canonical(response, challenge, consumed, policy_path=evidence.POLICY,
 
 class PhaseDEvidence(evidence.StagedEvidence):
     """Harden accepted Architecture C evidence without changing pinned authority."""
+    def __init__(self, stage, policy_path=evidence.POLICY, state=evidence.STATE):
+        super().__init__(stage, policy_path, state)
+        self.native_immutable_visibility = None
+
     def gate(self, phase, call, binding):
         path = self.state / phase / 'challenge.json'
         challenge = evidence.parse(path.read_bytes()) if path.exists() else None
@@ -68,14 +72,22 @@ class PhaseDEvidence(evidence.StagedEvidence):
             promotion.protected_branches(evidence.controls_call(observed, snapshot), strict=True)
             try:
                 immutable = call('/immutable-releases')
-            except RuntimeError as error:
-                # Exact github_api permission denial only. 404 can mean disabled;
-                # network failures, malformed replies and other errors stay fatal.
-                if str(error) != 'GitHub GET failed (HTTP 403); no automatic mutation retry':
+            except promotion.GitHubAPIError as error:
+                if not error.is_explicit_permission_restriction(
+                        'GET', '/repos/' + evidence.REPO + '/immutable-releases', 'administration=read'):
                     raise
+                self.native_immutable_visibility = 'OWNER_ATTESTED'
             else:
+                evidence.require(isinstance(immutable, dict) and type(immutable.get('enabled')) is bool
+                    and immutable['enabled'] is True and type(immutable.get('enforced_by_owner')) is bool,
+                    'Native release immutability disabled or malformed')
                 evidence.require(evidence.canonical(evidence.project(immutable, ('enabled', 'enforced_by_owner')))
                     == evidence.canonical(snapshot['immutable']), 'Live immutable settings contradict signed evidence')
+                self.native_immutable_visibility = 'RUNNER_VISIBLE'
+            record = getattr(call, 'observe_immutable_visibility', None)
+            if record is not None:
+                evidence.require(callable(record), 'Immutable-settings visibility audit unavailable')
+                record(self.native_immutable_visibility)
         evidence.require(int(time.time()) <= self.expires, 'Evidence expired during live controls recheck')
 
 
@@ -119,6 +131,12 @@ class AuditedTransport:
         promotion.require(status is None or type(status) is int and 100 <= status <= 599,
                           'Invalid HTTP observation')
         self.http_status = status
+
+    def observe_immutable_visibility(self, visibility):
+        promotion.require(visibility in ('RUNNER_VISIBLE', 'OWNER_ATTESTED'),
+                          'Invalid immutable-settings visibility observation')
+        self.record(dict(event='security-observation', observation='native-immutable-settings',
+                         value=visibility, observed_ns=self.clock()))
 
     def record(self, row):
         promotion.require(self.events < self.max_events, 'Mutation ledger limit')
