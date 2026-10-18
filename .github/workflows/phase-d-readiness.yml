@@ -15,7 +15,9 @@ jobs:
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Same declarations as publisher; script has only GET calls and never signs.
+    # Intentionally publisher-equivalent, NOT least-privilege: contents can be written.
+    # Exact main activation/dispatch requires explicit owner acceptance of token risk.
+    # Script uses GET only and never signs; token permissions do not enforce that.
     permissions:
       contents: write
       actions: read
@@ -35,6 +37,7 @@ jobs:
           PHASE_D_READ_ONLY_AUTHORIZED: 'true'
         run: python scripts/phase_d_readiness.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: phase-d-readiness-${{ github.run_id }}-${{ github.run_attempt }}
           path: phase-d-readiness.json

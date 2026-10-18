@@ -226,6 +226,7 @@ class PortTests(unittest.TestCase):
                 self.assertNotIn('  push:',text)
                 self.assertNotIn('workflow_run:',text)
                 self.assertIn('run: python scripts/phase_d_readiness.py',text)
+                self.assertIn('        if: always()\n        with:\n          name: phase-d-readiness-',text)
             if workflow.name in ('ci-release.yml', 'linux.yml'):
                 self.assertIn('permissions:\n  contents: read\n', text)
                 self.assertIn('scripts/offline_tests.py', text)

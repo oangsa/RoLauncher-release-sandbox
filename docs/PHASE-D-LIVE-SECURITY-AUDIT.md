@@ -15,7 +15,9 @@ It GETs repository identity and current main SHA, then collects complete Ruleset
 Its transport wrapper always supplies method GET; no publisher, signing helper, shell, private-key path or mutation method is reachable from this entry.
 
 Missing bypass arrays or native privilege produce `privileged_controls: BLOCKED`; complete matching disclosure and strict branch checks are required for PASS.
-A successful job alone cannot establish privileged visibility: independently inspect artifact content, expected 7 Rulesets, trusted SHA, run/attempt and digest.
+The script writes its result artifact, then exits with code 1 when `privileged_controls` is BLOCKED; only PASS returns successfully.
+The artifact upload uses `if: always()` so a denied verification retains diagnostic evidence while the job remains failed.
+Even a green job requires independent artifact review: expected 7 Rulesets, trusted SHA, run/attempt and exact enrolled digest; skipped or missing-artifact runs are not verified.
 Transport/API failure without a complete artifact is BLOCKED, never permission success; do not add owner PAT or Administration as a workaround.
 
 ## Permission review
@@ -30,7 +32,9 @@ Transport/API failure without a complete artifact is BLOCKED, never permission s
 
 Reducing contents-write would be safer for a generic reader but would test a different permission context.
 This proposal preserves exact declarations only for the manual trusted-main visibility experiment; owner approval must explicitly cover that token risk.
-The script's GET-only behavior is not a server-enforced read-only token guarantee.
+This is intentionally publisher-equivalent, **not least-privilege**. GET-only code is not a server-enforced read-only token guarantee.
+A compromised dependency, Action or modified script could use the contents-write token to attempt repository content, tag or Release writes, subject to existing protections; no Ruleset bypass is granted.
+Before main activation and each exact dispatch, the owner must explicitly accept this write-capable token risk; merge into dev alone grants no dispatch authority.
 
 Expected workflow writes: one Actions run/log stream and `phase-d-readiness-<run>-<attempt>` artifact, 14-day retention.
 Artifact contains visibility status/counts, approved digest and run identity, not raw privileged controls, signatures or secrets.
@@ -49,7 +53,7 @@ A revert through protected PR can restore `false &&`; it cannot erase previously
 
 1. After exact publisher activation/source/run approval, use the existing reviewed Windows helper from the trusted revision; verify the public fingerprint locally.
 2. Record exact publisher run ID, run attempt, trusted/source SHAs and synthetic version from independent GitHub GETs. No publisher run exists for this proposal.
-3. Only after separate signing and public-post approval, invoke `python scripts/owner_evidence.py --run-id <approved-id> --trusted-sha <approved-trusted-sha> --source-sha <approved-source-sha> --version <approved-synthetic-version> --key C:/Users/sukru/.ssh/rolauncher-sandbox-architecture-c-20261018 --approve-public-evidence` locally.
+3. Only after separate signing and public-post approval, invoke `python scripts/owner_evidence.py --run-id <approved-id> --trusted-sha <approved-trusted-sha> --source-sha <approved-source-sha> --version <approved-synthetic-version> --key "<local-sandbox-private-key-path>" --approve-public-evidence` locally.
 4. Inspect preflight challenge, type its exact APPROVE phrase, collect fresh complete controls, then type SIGN. Enter passphrase only in local OpenSSH.
 5. Repeat independently for final after complete staging; never reuse a signature/nonce or copy the private key into GitHub, CI, containers, repository or chat.
 6. Preserve 120-second TTL, 45-second collection/confirmation and 1,200-second attendance per gate. Abort changed source/policy/run/attempt, expiry, duplicate/edited/conflicting responses or canceled run.

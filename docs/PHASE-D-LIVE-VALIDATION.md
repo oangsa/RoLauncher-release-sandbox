@@ -39,7 +39,7 @@ No Production source, credential or configuration change is part of this proposa
 
 ## Readiness proposal and checklist
 
-The dedicated codex branch proposes only removing `false &&` from readiness, plus boundary regressions and these reports.
+The dedicated codex branch proposes removing `false &&` from readiness, failing the job on BLOCKED while retaining its diagnostic artifact, boundary regressions and these reports.
 This unmerged proposal does not activate protected main; review exact PR HEAD and its five contexts before authorizing an owner merge.
 Use feature to dev, then a separately reviewed official dev-to-main PR; no direct protected-branch write.
 
@@ -64,7 +64,7 @@ Use feature to dev, then a separately reviewed official dev-to-main PR; no direc
 
 1. Review the dedicated readiness PR's exact HEAD and owner-authorize only its merge into dev; review/approve official dev-to-main separately.
 2. Once resulting main and all checks are verified, authorize one manual readiness dispatch at that exact main SHA, attempt 1.
-3. The readiness token declares contents-write, Actions-read, PR-read and Issues-read; no Administration. Script calls only GET; Actions artifact upload is an expected write.
+3. The owner must explicitly accept the intentionally non-least-privilege contents-write token risk; other declarations are Actions-read, PR-read and Issues-read, without Administration. Script calls only GET; Actions artifact upload is an expected write.
 4. Approve real signing/public responses, publisher variables/activation, named permanent fixtures, live fault/denied scenarios and cleanup separately.
 
 No future run ID, challenge, response, Release ID, mutating HTTP outcome or mutation ledger is invented here.

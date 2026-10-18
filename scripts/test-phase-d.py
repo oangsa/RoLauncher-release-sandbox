@@ -248,11 +248,12 @@ class EvidenceTests(unittest.TestCase):
         import phase_d_readiness as readiness
         f=self.fixture
         calls=[]
+        visible=False
         def backend(path,method='GET'):
             self.assertEqual(method,'GET')
             calls.append(path)
             if path=='/branches/main':return {'commit':{'sha':'a'*40}}
-            return f.api(path)
+            return f.api.full(path) if visible else f.api(path)
         env=dict(PHASE_D_READ_ONLY_AUTHORIZED='true',GITHUB_REPOSITORY=evidence.REPO,
             GITHUB_REPOSITORY_ID=str(evidence.REPO_ID),GITHUB_EVENT_NAME='workflow_dispatch',
             GITHUB_REF='refs/heads/main',GITHUB_WORKFLOW_REF=evidence.REPO+
@@ -262,11 +263,16 @@ class EvidenceTests(unittest.TestCase):
                 patch.object(promotion,'github_api',return_value=backend) as factory, \
                 patch.object(evidence,'load_policy',return_value=(f.policy,f.policy['keys'])), \
                 patch.object(evidence,'sign') as sign:
-            result=readiness.main()
+            with self.assertRaises(SystemExit) as blocked:
+                readiness.main()
+            self.assertEqual(blocked.exception.code,1)
+            result=json.loads(Path('phase-d-readiness.json').read_text())
             self.assertEqual(result['privileged_controls'],'BLOCKED')
             self.assertEqual(result['trusted_sha'],'a'*40)
             self.assertEqual((result['run_id'],result['attempt']),(99,1))
             self.assertEqual(json.loads(Path('phase-d-readiness.json').read_text()),result)
+            visible=True
+            self.assertEqual(readiness.main()['privileged_controls'],'PASS')
             accepted_calls=list(calls)
             for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_EVENT_NAME','pull_request'),
                     ('GITHUB_REF','refs/heads/codex/test'),('GITHUB_REPOSITORY','oangsa/RoLauncher'),
@@ -275,7 +281,8 @@ class EvidenceTests(unittest.TestCase):
                 with self.subTest(key=key,value=value),patch.dict(os.environ,{key:value}),self.assertRaises(ValueError):
                     readiness.main()
             self.assertEqual(calls,accepted_calls)
-            factory.assert_called_once_with('offline-token')
+            self.assertEqual(factory.call_count,2)
+            factory.assert_called_with('offline-token')
             sign.assert_not_called()
         self.assertEqual(f.api.writes,[])
 
