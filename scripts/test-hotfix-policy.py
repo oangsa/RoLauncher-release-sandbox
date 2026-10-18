@@ -162,7 +162,11 @@ class HotfixTests(unittest.TestCase):
             self.assertNotIn('scripts/publish-', workflow)
             self.assertNotIn('pull_request_target', workflow)
         workflow = (root / '.github/workflows/release-promotion.yml').read_text()
-        self.assertIn('if: >-\n      false &&\n', workflow)
+        guard = workflow.split('  promote:\n', 1)[1].split('    runs-on:', 1)[0]
+        self.assertNotIn('false &&', guard)
+        self.assertIn("vars.RELEASE_PROMOTION_ENABLED == 'true'", guard)
+        self.assertIn("vars.PHASE_D_LIVE_AUTHORIZED == 'true'", guard)
+        self.assertIn("github.repository_id == '1423257712'", guard)
         self.assertIn('ref: ${{ github.sha }}', workflow)
         self.assertNotIn('ref: ${{ github.event.workflow_run.head_sha }}', workflow)
 

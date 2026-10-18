@@ -551,9 +551,13 @@ class OwnerEvidenceTests(unittest.TestCase):
         self.assertNotIn('src/updates.rs', GOVERNANCE_PATHS)
         self.assertNotIn('Cargo.toml', GOVERNANCE_PATHS)
 
-    def test_workflow_stays_hard_disabled_with_enrolled_policy(self):
+    def test_workflow_requires_two_runtime_authorizations_with_enrolled_policy(self):
         workflow = (evidence.ROOT / '.github/workflows/release-promotion.yml').read_text()
-        self.assertIn('false &&', workflow)
+        guard = workflow.split('  promote:\n', 1)[1].split('    runs-on:', 1)[0]
+        self.assertNotIn('false &&', guard)
+        self.assertIn("vars.RELEASE_PROMOTION_ENABLED == 'true'", guard)
+        self.assertIn("vars.PHASE_D_LIVE_AUTHORIZED == 'true'", guard)
+        self.assertIn('PHASE_D_OPERATION_PLAN: ${{ vars.PHASE_D_OPERATION_PLAN }}', workflow)
         self.assertIn('timeout-minutes: 60', workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('issues: read', workflow)

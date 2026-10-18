@@ -2,16 +2,18 @@
 
 **Status:** sequencing is viable at the source-contract level with one owner-controlled Linux rerun after SHA and artifact verification. This is not approval to activate or run the Publisher.
 
-## Keep activation ahead of the candidate source
+## Activation and candidate sequence
 
-1. Review and merge the candidate-preparation PR to `dev` through normal governance. It contains no active intent.
-2. Separately review the Publisher activation patch. Bring that change to `dev`, then use an owner-approved `dev` → `main` PR to install it on the default branch. Keep `RELEASE_PROMOTION_ENABLED` and `PHASE_D_LIVE_AUTHORIZED` false or unset, and leave the operation plan unconfigured. Activation advances `main`, so it must happen before the final candidate source is created.
-3. Separately approve an intent-only PR that adds the proposed schema-1 record at `.github/release-intents/0db2788e-d5f3-478f-9f77-6d6d0dd064f4.json` to `dev`. The final official `dev` → `main` PR must be merged by the repository owner. Record the actual `merge_commit_sha` as candidate source SHA `C` only after GitHub creates it.
-4. Let the main-push CI and Linux workflows for `C` finish. Verify PR/source identity, all five required job contexts, exact run IDs and attempts, artifact group names, artifact IDs/digests, source ZIP/Git tree match, and current `main == C`.
+1. PR #20 has merged into `dev` at `f5c36daca15d569e53eac651be9a795dd71fb9e6`. It added only inert proposed candidate files; `.github/release-intents/` remains absent, and all five post-merge contexts passed on attempt 1.
+2. Synchronize PR #21 with this `dev` commit, preserve its guarded activation changes and keep it Draft. Review and merge only after the owner approves the exact refreshed PR HEAD and all five contexts pass.
+3. After PR #21 merges into `dev` and its post-merge checks pass, verify `RELEASE_PROMOTION_ENABLED` and `PHASE_D_LIVE_AUTHORIZED` are false or unset and `PHASE_D_OPERATION_PLAN` is absent or non-executable through an authorized authenticated owner interface. If any value is unreadable, set `VARIABLE_STATE_NOT_VERIFIED` and block main promotion. If a flag is true or the plan is executable, stop.
+4. Separately approve the exact protected `dev` → `main` activation PR. Immediately after installation, re-read the main SHA, Publisher workflow, both disabled flags, and plan state; no candidate run is authorized before this second readback.
+5. Only after those gates, separately approve an intent-only candidate PR that adds the proposed schema-1 record at `.github/release-intents/0db2788e-d5f3-478f-9f77-6d6d0dd064f4.json`. Record the actual owner-approved main `merge_commit_sha` as candidate source SHA `C` only after GitHub creates it.
+6. Let the main-push CI and Linux workflows for `C` finish. Verify PR/source identity, all five required job contexts, exact run IDs and attempts, artifact group names, artifact IDs/digests, source ZIP/Git tree match, and current `main == C`.
 
 ## First-event race and guarded recovery
 
-The current Publisher workflow has literal `false &&`. The activation patch removes that hard stop but adds two explicit variable checks. With both variables held false, the CI and Linux completion events cannot start Publisher jobs while their records are being collected and reviewed.
+Current `main` and `dev` still contain literal `false &&`; the unmerged PR #21 proposal removes that hard stop but requires both explicit runtime flags. With both variables held false, the CI and Linux completion events cannot start Publisher jobs while their records are being collected and reviewed.
 
 After the initial `workflow_run` events have completed with their Publisher jobs skipped, obtain owner approval for the exact candidate scope. Set `trusted_sha=C` and `source_sha=C` only if the default-branch SHA seen by the Publisher is still `C` and the triggering source run also has head SHA `C`. Then set the approved operation plan and activation variables. Do not merge or otherwise advance `main` during this run.
 
@@ -29,8 +31,10 @@ If `main` advances after `C`, `authorize_plan()` rejects a trusted SHA that diff
 
 ## Owner approvals still required
 
-- Owner review and merge of this inert candidate-preparation PR to `dev`.
-- Separate security approval of the activation workflow diff and the official owner-merged promotion to `main`.
+- Owner review and separate merge approval for PR #21 at its exact refreshed HEAD.
+- Separate post-merge validation of PR #21 on `dev`.
+- Authenticated owner verification of disabled/unset flags and non-executable/absent plan before main promotion; `VARIABLE_STATE_NOT_VERIFIED` blocks.
+- Separate security approval of the exact activation workflow promotion to `main` and immediate post-install variable-state readback.
 - Explicit approval of the permanent synthetic tag/release name `v0.0.900`, including possible immutable or undeletable Release consequences.
 - Separate approval to add the proposed UUID at the active intent path through an intent-only PR and to merge the official `dev` → `main` candidate PR as owner.
 - Separate approval of the exact GitHub-derived SHA, source runs/attempts, artifact IDs/digests, operation plan, activation variables, and Linux rerun that wakes the Publisher.
@@ -39,6 +43,6 @@ If `main` advances after `C`, `authorize_plan()` rejects a trusted SHA that diff
 
 ## Current decision and limits
 
-No activation patch, variables, active intent, workflow rerun, tag, Release, signed evidence, HTTP mutation, or Production access occurred. The sequence is `PASS` for contract-level planning, `NOT RUN` for actual GitHub workflow rerun delivery, and `BLOCKED` for live Publisher/publication until the approvals above and actual source identities exist.
+PR #20 is merged with inert proposal files on `dev`; no active `.github/release-intents/` path exists. PR #21 remains Draft and unmerged, and no activation patch is installed on `main`. No variables, workflow rerun, tag, Release, signed evidence, HTTP mutation, or Production access occurred. Source-contract planning is `PASS`; live event delivery is `NOT RUN`; Publisher activation and publication remain `BLOCKED` pending the approvals and actual source identities above.
 
 GitHub references: [workflow events and `workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows), [re-running workflows and jobs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs), and [workflow variables including run ID and attempt](https://docs.github.com/en/actions/reference/workflows-and-actions/variables).

@@ -29,6 +29,109 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(live.main([]),'disabled')
             network.assert_not_called()
 
+    def test_each_activation_flag_is_required_and_plan_errors_precede_transport(self):
+        import phase_d_publisher as live
+        base=dict(GITHUB_REPOSITORY=evidence.REPO,GITHUB_REPOSITORY_ID=str(evidence.REPO_ID),
+            GITHUB_WORKFLOW_REF=evidence.REPO+'/'+evidence.WORKFLOW+'@refs/heads/main',
+            GITHUB_EVENT_NAME='workflow_run',GITHUB_SHA='d'*40,GITHUB_RUN_ID='99',GITHUB_RUN_ATTEMPT='1')
+        for enabled in ({},{'RELEASE_PROMOTION_ENABLED':'true'},
+                        {'PHASE_D_LIVE_AUTHORIZED':'true'}):
+            with self.subTest(enabled=enabled),patch.dict(os.environ,{**base,**enabled},clear=True),\
+                    patch.object(promotion,'github_api') as network:
+                self.assertEqual(live.main(['--stage','prepare']),'disabled')
+                network.assert_not_called()
+        for plan in ('','{'):
+            with self.subTest(plan=plan),patch.dict(os.environ,{**base,
+                    'RELEASE_PROMOTION_ENABLED':'true','PHASE_D_LIVE_AUTHORIZED':'true',
+                    'PHASE_D_OPERATION_PLAN':plan},clear=True),patch.object(promotion,'github_api') as network:
+                with self.assertRaises(ValueError):live.main(['--stage','prepare'])
+                network.assert_not_called()
+
+    def test_beta_event_cannot_enter_stable_operation_scope(self):
+        event=dict(repository=dict(default_branch='main',id=evidence.REPO_ID,full_name=evidence.REPO),
+            workflow_run=dict(id=12,run_attempt=1,head_sha='a'*40))
+        writes=[]
+        def simulated_github(path,method='GET',body=None,**kwargs):
+            if method!='GET':writes.append((path,method))
+            return dict(run_attempt=1,head_sha='a'*40,status='completed',conclusion='success',
+                path='.github/workflows/beta-release.yml')
+        with self.assertRaisesRegex(ValueError,'Wrong publication channel'):
+            promotion.promote_event(simulated_github,event,channel='stable',evidence=object())
+        self.assertEqual(writes,[])
+
+    def test_live_entry_passes_plan_channel_into_event_reconciliation(self):
+        import phase_d_publisher as live
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as folder:
+            event_path=Path(folder)/'event.json'
+            event_path.write_text(json.dumps(dict(
+                repository=dict(default_branch='main',id=evidence.REPO_ID,full_name=evidence.REPO),
+                workflow_run=dict(id=12,run_attempt=1,head_sha='a'*40))),encoding='utf-8')
+            plan=dict(schema=1,repository_id=evidence.REPO_ID,owner_id=evidence.OWNER,
+                trusted_sha='d'*40,source_sha='a'*40,run_id=99,attempt=1,tag='v0.0.900',
+                channel='stable',fault=None,faults_approved=False)
+            writes=[]
+            def simulated_github(path,method='GET',body=None,**kwargs):
+                if method!='GET':writes.append((path,method))
+                return dict(run_attempt=1,head_sha='a'*40,status='completed',conclusion='success',
+                    path='.github/workflows/beta-release.yml')
+            cwd=Path.cwd()
+            try:
+                os.chdir(folder)
+                with patch.dict(os.environ,dict(GITHUB_REPOSITORY=evidence.REPO,
+                        GITHUB_REPOSITORY_ID=str(evidence.REPO_ID),
+                        GITHUB_WORKFLOW_REF=evidence.REPO+'/'+evidence.WORKFLOW+'@refs/heads/main',
+                        GITHUB_EVENT_NAME='workflow_run',GITHUB_SHA='d'*40,GITHUB_RUN_ID='99',
+                        GITHUB_RUN_ATTEMPT='1',GITHUB_EVENT_PATH=str(event_path),
+                        RELEASE_PROMOTION_ENABLED='true',PHASE_D_LIVE_AUTHORIZED='true',
+                        PHASE_D_OPERATION_PLAN=json.dumps(plan),GITHUB_TOKEN='synthetic-token'),clear=True),\
+                        patch.object(promotion,'github_api',return_value=simulated_github):
+                    with self.assertRaisesRegex(ValueError,'Wrong publication channel'):
+                        live.main(['--stage','prepare'])
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(writes,[])
+
+    def test_activation_workflow_contract_is_guarded_and_uses_phase_d_for_every_stage(self):
+        root=Path(__file__).resolve().parents[1]
+        publisher=(root/'.github/workflows/release-promotion.yml').read_text(encoding='utf-8')
+        beta=(root/'.github/workflows/beta-release.yml').read_text(encoding='utf-8')
+        poc=(root/'.github/workflows/owner-evidence-dry-run.yml').read_text(encoding='utf-8')
+        job=publisher.split('  promote:\n',1)[1]
+        guard=job.split('    runs-on:',1)[0]
+        self.assertNotIn('false &&',guard)
+        for condition in ("vars.RELEASE_PROMOTION_ENABLED == 'true'",
+                          "vars.PHASE_D_LIVE_AUTHORIZED == 'true'",
+                          "github.repository == 'oangsa/RoLauncher-release-sandbox'",
+                          "github.repository_id == '1423257712'",
+                          "github.event.workflow_run.event == 'push'",
+                          "github.event.workflow_run.conclusion == 'success'",
+                          "github.event.workflow_run.head_repository.full_name == github.repository",
+                          "github.event.workflow_run.head_branch == 'main'",
+                          "github.event.workflow_run.name == 'Beta release'"):
+            self.assertIn(condition,guard)
+        for stage in ('prepare','stage','finish'):
+            self.assertIn(f'python3 scripts/phase_d_publisher.py --stage {stage}',job)
+        self.assertEqual(job.count('PHASE_D_LIVE_AUTHORIZED: ${{ vars.PHASE_D_LIVE_AUTHORIZED }}'),3)
+        self.assertEqual(job.count('PHASE_D_OPERATION_PLAN: ${{ vars.PHASE_D_OPERATION_PLAN }}'),3)
+        self.assertEqual(job.count('RELEASE_PROMOTION_ENABLED: ${{ vars.RELEASE_PROMOTION_ENABLED }}'),3)
+        self.assertEqual(job.count('GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}'),3)
+        self.assertIn('ref: ${{ github.sha }}',job)
+        self.assertIn('persist-credentials: false',job)
+        self.assertIn('actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',job)
+        self.assertIn('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',job)
+        self.assertIn('cancel-in-progress: false',publisher)
+        self.assertIn('group: protected-release-promotion',publisher)
+        self.assertIn('contents: write',job)
+        self.assertIn('actions: read',job)
+        self.assertIn('pull-requests: read',job)
+        self.assertIn('issues: read',job)
+        self.assertNotIn('administration:',job)
+        self.assertNotIn('id-token:',job)
+        self.assertIn('timeout-minutes: 60',job)
+        self.assertEqual(beta.count('false &&'),2)
+        self.assertIn('false &&',poc)
+        self.assertNotIn('workflow_dispatch:',publisher)
+
     def test_operation_plan_binds_exact_trusted_source_run_and_fixture(self):
         import phase_d_publisher as live
         env=dict(GITHUB_REPOSITORY=evidence.REPO,GITHUB_REPOSITORY_ID=str(evidence.REPO_ID),
@@ -1120,9 +1223,15 @@ class EvidenceTests(unittest.TestCase):
         try:
             os.chdir(f.root)
             with patch.dict(os.environ,RELEASE_PROMOTION_ENABLED='true',PHASE_D_LIVE_AUTHORIZED='true',
-                    PHASE_D_OPERATION_PLAN=json.dumps(scope),GITHUB_EVENT_PATH=str(event),
+                    PHASE_D_OPERATION_PLAN=json.dumps(dict(scope,tag='v0.0.901')),GITHUB_EVENT_PATH=str(event),
                     GITHUB_OUTPUT=str(f.root/'outputs'),GITHUB_TOKEN='disposable-not-a-credential'),\
                     patch.object(promotion,'github_api',return_value=f.api):
+                with self.assertRaisesRegex(ValueError,'plan.*intent'):
+                    live.main(['--stage','prepare'],policy_path=f.policy_path)
+                self.assertEqual(f.api.writes,[])
+                # A rejected publisher attempt keeps its append-only stage ledger.
+                os.environ['GITHUB_RUN_ATTEMPT']='2'
+                os.environ['PHASE_D_OPERATION_PLAN']=json.dumps(scope)
                 self.assertEqual(live.main(['--stage','prepare'],policy_path=f.policy_path),'challenge-ready')
                 f.post(f.challenge('preflight'))
                 self.assertEqual(live.main(['--stage','stage'],policy_path=f.policy_path),'challenge-ready')
@@ -1130,6 +1239,10 @@ class EvidenceTests(unittest.TestCase):
                 self.assertEqual(live.main(['--stage','finish'],policy_path=f.policy_path),'published')
         finally:os.chdir(cwd)
         self.assertTrue(f.api.release['immutable'])
+        ledger=''.join(path.read_text(encoding='utf-8') for path in (f.root/'owner-evidence').glob('phase-d-*.jsonl'))
+        self.assertIn('"value":"RUNNER_VISIBLE"',ledger)
+        self.assertNotIn('disposable-not-a-credential',ledger)
+        self.assertNotIn('GITHUB_TOKEN',ledger)
 
 
 if __name__ == '__main__':

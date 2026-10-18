@@ -4,9 +4,9 @@
 
 ## Verified sandbox state
 
-The repository is `oangsa/RoLauncher-release-sandbox` (ID `1423257712`), owned by account ID `71574088`. Current `main` is `b19226ccc5a28fe2632bf6d3c4d6f4b2eb9ab230`; current `dev` is `ba09c98ee602f9da76ccdf935a6bf1f70125fc80`.
+At preparation time, `main` was `b19226ccc5a28fe2632bf6d3c4d6f4b2eb9ab230` and `dev` was `ba09c98ee602f9da76ccdf935a6bf1f70125fc80`. PR #20 later merged its approved candidate-preparation HEAD into `dev` at `f5c36daca15d569e53eac651be9a795dd71fb9e6`; GitHub records merger `oangsa` (owner ID `71574088`) at `2026-10-18T11:42:32Z`. That merge has parents `ba09c98ee602f9da76ccdf935a6bf1f70125fc80` and `67f7bff270329090104b8d14c3bc37f6ec689dc0`, tree `6e29794c49812979cf9c096bb083e292536465fa`, and all five post-merge checks passed on run attempt 1.
 
-PR #18 and PR #19 are merged. Read-only GitHub API checks found zero tags and zero Releases. Production `oangsa/RoLauncher` was not accessed.
+PR #18, #19, and #20 are merged. PR #20 placed only inert proposal files in `phase-d/candidates/v0.0.900/`; the active `.github/release-intents/` path remains absent. No release or tag mutation was part of the merge. Production `oangsa/RoLauncher` was not accessed.
 
 ## Candidate identity and inert proposal
 
