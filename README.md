@@ -2,7 +2,7 @@
 
 **SANDBOX ONLY — inert lifecycle fixtures, no application binaries.**
 This is the Architecture C sandbox port for oangsa/RoLauncher-release-sandbox (1423257712).
-Hosted CI activation is proposed; publisher, beta and historical PoC remain hard-disabled.
+Hosted builders are active; publisher, beta and historical PoC remain hard-disabled.
 Phase C signer, inbox and disclosure policy are described in [Owner evidence enrollment](docs/OWNER-EVIDENCE.md).
 No release intent is enrolled; live signing and publication require separate approval.
 
@@ -28,5 +28,6 @@ The synthetic version metadata and notes exercise the unchanged publisher data c
 Small M2 fixtures do not prove large-upload, expiry or native GitHub behavior.
 
 See docs/SANDBOX-PORT.md for identity pins and remaining gates.
+Current Phase D implementation and live-approval gates are recorded in [Phase D validation](docs/PHASE-D-VALIDATION.md).
 The authoritative docs/SANDBOX-RELEASE-LIFECYCLE.md is copied from the production merge.
 Historical PoC instructions are archived in docs/POC-README.md and grant no M2 publishing authorization.
