@@ -74,7 +74,7 @@ Operational Publisher capacity remains fixed at 256 MiB per archive, 256 MiB per
 
 - `VARIABLE_STATE_NOT_VERIFIED`: GitHub’s approved read connector rejected the Actions variables endpoint. No variable was changed and no value is assumed. Before any future promotion into main, the owner must independently verify both activation flags are false/unset and `PHASE_D_OPERATION_PLAN` has no executable plan. Until then, main promotion is **BLOCKED**.
 - Source/intent readiness: **NOT READY**. PR #20 is open; there is no active candidate intent, reviewed candidate source SHA, trusted activation-main SHA, artifact run identity, or operation plan.
-- Activation Draft PR checks: pending until its exact head and test-merge revision exist.
+- The Draft PR body records exact head, base, test-merge SHA, and hosted context results; owner approval must verify all five contexts still match the current PR revision.
 - Live event delivery, owner signatures, artifact uploads, capacity at production-sized files, mutation denial, native immutability, and recovery behavior against GitHub: **NOT RUN**.
 - Published tags/Releases may be permanent or immutable. The owner must explicitly accept the exact `v0.0.900` fixture risk before any live fixture operation.
 
@@ -90,7 +90,7 @@ Operational Publisher capacity remains fixed at 256 MiB per archive, 256 MiB per
 | Python AST syntax | PASS — 22 scripts |
 | Source artifact parser/tree verification | PASS — offline integration regressions |
 | Whitespace and workflow guard/permissions diff review | PASS |
-| Hosted PR contexts and exact test-merge SHA | Pending activation Draft PR |
+| Hosted PR contexts and exact test-merge SHA | See PR body; verify all five required contexts against the current PR head, base, and test-merge SHA before owner approval |
 
 ## Required default-branch warning
 
