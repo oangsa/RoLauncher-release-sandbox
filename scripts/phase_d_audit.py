@@ -5,10 +5,11 @@ import re
 from urllib.parse import quote
 
 import owner_evidence as evidence
+from phase_d_capacity import ArtifactWorkspace
 import release_promotion as promotion
 
 
-def verify_release(call,tag,source,receipt_bytes):
+def _verify_release(call,tag,source,receipt_bytes,workspace):
     evidence.require(isinstance(tag,str) and re.fullmatch(r'(beta-)?v'+promotion.STABLE_VERSION,tag)
         and re.fullmatch('[a-f0-9]{40}',source),'Audit tag/source identity')
     repository=call('')
@@ -42,16 +43,26 @@ def verify_release(call,tag,source,receipt_bytes):
     evidence.require(len(assets)==len(expected) and {a['name'] for a in assets}==set(expected),'Audit asset inventory')
     verified=[]
     for asset in assets:
-        evidence.require(type(asset['size']) is int and 0<=asset['size']<=promotion.MAX_ENTRY_BYTES,'Audit asset size limit')
-        data=call('/releases/assets/'+str(asset['id']),raw=True)
-        digest=hashlib.sha256(data).hexdigest()
-        evidence.require(len(data)==asset['size'] and digest==expected[asset['name']]
+        evidence.require(type(asset['size']) is int and 0<asset['size']<=workspace.policy.max_entry_bytes,'Audit asset size limit')
+        data=workspace.download(call,'/releases/assets/'+str(asset['id']),
+            f'audit-asset-{asset["id"]}.bin',asset['size'],'staging')
+        digest=data.sha256
+        evidence.require(data.size==asset['size'] and digest==expected[asset['name']]
             and asset.get('digest')=='sha256:'+digest,'Audit downloaded bytes differ')
-        verified.append(dict(id=asset['id'],name=asset['name'],size=len(data),sha256=digest))
+        verified.append(dict(id=asset['id'],name=asset['name'],size=data.size,sha256=digest))
     evidence.require(call('/releases/'+str(release['id']))==current,'Audit Release changed during downloads')
     return dict(status='PASS',repository_id=evidence.REPO_ID,tag=tag,source=source,
                 release_id=release['id'],immutable=True,assets=verified,
                 receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest())
+
+
+def verify_release(call,tag,source,receipt_bytes,workspace=None):
+    owns_workspace=workspace is None
+    workspace=workspace or ArtifactWorkspace(promotion.capacity_policy())
+    try:
+        return _verify_release(call,tag,source,receipt_bytes,workspace)
+    finally:
+        if owns_workspace:workspace.close()
 
 
 def denied_probe_plan(audit,target_sha):

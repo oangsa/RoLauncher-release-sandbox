@@ -1,40 +1,74 @@
 """Held Phase D integration entry; no activation or implicit signing authority."""
 import argparse
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
 import re
-import struct
 import zipfile
 
 import owner_evidence as evidence
+from phase_d_capacity import ArtifactFile, ArtifactWorkspace
 import release_promotion as promotion
 from phase_d import AuditedTransport, PhaseDEvidence, validated_fault
 
 
 class FrozenArtifacts:
     """One bounded artifact observation per stage, shared by admission/source gate."""
-    def __init__(self,call):self.call,self.cache=call,{}
-    def observe_immutable_visibility(self,visibility):
-        observer=getattr(self.call,'observe_immutable_visibility',None)
-        evidence.require(callable(observer),'Audit transport cannot record immutable-settings visibility')
+    def __init__(self, call):
+        self.call, self.cache, self.workspace = call, {}, None
+
+    def bind_workspace(self, workspace):
+        evidence.require(self.workspace is None or self.workspace is workspace, 'Artifact workspace changed')
+        self.workspace=workspace
+
+    def observe_immutable_visibility(self, visibility):
+        observer = getattr(self.call, 'observe_immutable_visibility', None)
+        evidence.require(callable(observer), 'Audit transport cannot record immutable-settings visibility')
         observer(visibility)
-    def __call__(self,path,*args,**kwargs):
-        cacheable=not args and (re.fullmatch(r'/actions/runs/[1-9][0-9]*/artifacts\?per_page=100',path)
-            or re.fullmatch(r'/actions/artifacts/[1-9][0-9]*/zip',path))
-        if not cacheable:return self.call(path,*args,**kwargs)
+
+    def close(self):
+        if self.workspace is not None:
+            self.workspace.close()
+
+    def __call__(self, path, *args, **kwargs):
+        cacheable = not args and (re.fullmatch(r'/actions/runs/[1-9][0-9]*/artifacts\?per_page=100', path)
+            or re.fullmatch(r'/actions/artifacts/[1-9][0-9]*/zip', path))
+        if not cacheable:
+            return self.call(path, *args, **kwargs)
         if path not in self.cache:
-            evidence.require(len(self.cache)<4,'Artifact observation cache limit')
-            self.cache[path]=self.call(path,**kwargs)
+            evidence.require(len(self.cache) < 4, 'Artifact observation cache limit')
+            if path.endswith('/zip'):
+                if self.workspace is None:
+                    self.workspace = ArtifactWorkspace(promotion.capacity_policy())
+                artifact_id = int(path.split('/')[3])
+                sink = kwargs.get('sink') or self.workspace.sink(
+                    f'artifact-{artifact_id}.zip', self.workspace.policy.max_archive_bytes, 'archive')
+                try:
+                    result = self.call(path, raw=True, sink=sink)
+                    if isinstance(result, bytes):
+                        for offset in range(0, len(result), self.workspace.policy.max_buffer_bytes):
+                            sink.write(result[offset:offset + self.workspace.policy.max_buffer_bytes])
+                    self.cache[path] = sink.finish()
+                except BaseException:
+                    sink.abort()
+                    raise
+            else:
+                self.cache[path] = self.call(path, **kwargs)
         return self.cache[path]
 
 
-def verify_source_artifact(call,binding):
+def _verify_source_artifact(call,binding,workspace):
     """All channels: exact source ZIP/Git blobs before either challenge/mutation."""
     import hotfix_policy
     run=binding['source']
+    prefix='rolauncher-v'+binding['intent']['version']
+    source_name=prefix+'-source.zip'
+    if workspace is not None and source_name in workspace.release_files:
+        source_file=workspace.release_files[source_name]
+        evidence.require(isinstance(source_file,ArtifactFile),'Source artifact was not staged as a bounded file')
+        hotfix_policy.verify_source_file(call,run['head_sha'],source_file)
+        return
     result=call(f'/actions/runs/{run["id"]}/artifacts?per_page=100')
     evidence.require(result['total_count']==len(result['artifacts'])<100,'Source artifact inventory incomplete')
     name=('beta-windows' if binding['intent']['channel']=='beta' else 'release-files')+'-attempt-'+str(run['run_attempt'])
@@ -42,30 +76,63 @@ def verify_source_artifact(call,binding):
     evidence.require(len(matches)==1,'Source artifact ambiguous')
     artifact=matches[0]
     evidence.require(artifact['workflow_run']['id']==run['id'] and artifact['workflow_run']['head_sha']==run['head_sha']
-        and 0<artifact['size_in_bytes']<=promotion.MAX_ARCHIVE_BYTES,'Source artifact provenance')
+        and 0<artifact['size_in_bytes']<=promotion.capacity_policy().max_archive_bytes,'Source artifact provenance')
     raw=call('/actions/artifacts/'+str(artifact['id'])+'/zip',raw=True)
-    evidence.require(len(raw)==artifact['size_in_bytes'] and artifact['digest']=='sha256:'+hashlib.sha256(raw).hexdigest(),
+    if workspace is None:workspace=ArtifactWorkspace(promotion.capacity_policy())
+    if isinstance(raw,ArtifactFile):
+        raw_size,raw_digest=raw.verify()
+        raw_path=raw.path
+    else:
+        raw_size=len(raw)
+        raw_digest=hashlib.sha256(raw).hexdigest()
+        raw_file=workspace.write_bytes(f'artifact-{artifact["id"]}.zip',raw,workspace.policy.max_archive_bytes,'archive')
+        raw_path=raw_file.path
+    evidence.require(raw_size==artifact['size_in_bytes'] and artifact['digest']=='sha256:'+raw_digest,
                      'Source artifact digest')
-    prefix='rolauncher-v'+binding['intent']['version']
-    end=raw.rfind(b'PK\x05\x06',max(0,len(raw)-65557))
-    evidence.require(end>=0 and end+22<=len(raw),'Invalid source artifact footer')
-    disk,directory_disk,local_count,count,size,offset,comment=struct.unpack_from('<4H2IH',raw,end+4)
-    evidence.require(disk==directory_disk==0 and local_count==count==4 and size<=65536
-        and offset+size==end and end+22+comment==len(raw),'Source outer directory budget')
-    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        # The original promotion parser validates the complete ZIP before calling
-        # this gate. Recheck exact inventory here before reading only source bytes.
+    promotion._archive_footer(raw_path,4,workspace.policy)
+    workspace.open_archive()
+    try:
+      with zipfile.ZipFile(raw_path) as archive:
         expected={prefix+s for s in ('-setup-x64.exe','-windows-x64.zip','-source.zip','-SHA256SUMS.txt')}
         evidence.require(len(archive.infolist())==4 and set(archive.namelist())==expected,'Source outer inventory')
         info=archive.getinfo(prefix+'-source.zip')
-        evidence.require(info.file_size<=promotion.MAX_ENTRY_BYTES and not info.flag_bits&1,'Source entry budget')
-        data=archive.read(info)
-    hotfix_policy.verify_source(call,run['head_sha'],data)
+        evidence.require(info.file_size<=workspace.policy.max_entry_bytes and not info.flag_bits&1,'Source entry budget')
+        source_file=workspace.source_files.get(source_name)
+        if source_file is None:
+            sink=workspace.sink(f'source-{artifact["id"]}.zip',workspace.policy.max_entry_bytes,'expanded')
+            try:
+                written=0
+                with archive.open(info) as source:
+                    while chunk:=source.read(workspace.policy.max_buffer_bytes):written+=sink.write(chunk)
+                evidence.require(written==info.file_size,'Source entry size mismatch')
+                source_file=sink.finish()
+                workspace.source_files[source_name]=source_file
+            except BaseException:
+                sink.abort()
+                raise
+      hotfix_policy.verify_source_file(call,run['head_sha'],source_file)
+    finally:
+      workspace.close_archive()
+
+
+def verify_source_artifact(call,binding,workspace=None):
+    workspace=workspace or getattr(call,'workspace',None)
+    owns_workspace=workspace is None
+    if owns_workspace:
+        workspace=ArtifactWorkspace(promotion.capacity_policy())
+        binder=getattr(call,'bind_workspace',None)
+        if callable(binder):
+            binder(workspace)
+            owns_workspace=False
+    try:
+        return _verify_source_artifact(call,binding,workspace)
+    finally:
+        if owns_workspace:workspace.close()
 
 
 class LifecycleEvidence(PhaseDEvidence):
     def gate(self,phase,call,binding):
-        verify_source_artifact(call,binding)
+        verify_source_artifact(call,binding,workspace=getattr(self,'workspace',None))
         return super().gate(phase,call,binding)
 
 
