@@ -78,9 +78,22 @@ class AuditTests(unittest.TestCase):
     def test_scaled_large_archives_repeat_deterministically_and_cleanup_is_plan_only(self):
         import phase_d_fixtures as large
         import phase_d_audit as audit
+        import sandbox_fixtures as fixtures
         with tempfile.TemporaryDirectory() as folder:
-            first=large.package(Path(folder)/'one',4096,2048)
-            second=large.package(Path(folder)/'two',4096,2048)
+            # Offline tests discard inherited Git trust configuration. Own the test
+            # repository instead of depending on the hosted container checkout.
+            root=Path(folder)/'source';root.mkdir()
+            inputs={'Cargo.toml':'[package]\nname="rolauncher"\nversion="0.0.900"\n',
+                'Cargo.lock':'[[package]]\nname="rolauncher"\nversion="0.0.900"\n',
+                'README.md':'# RoLauncher 0.0.900\nSandbox only\n',
+                'AGENTS.md':'Synthetic instructions\n','LICENSE':'Synthetic license\n',
+                'THIRD_PARTY_NOTICES.md':'No binary dependencies\n'}
+            for name,text in inputs.items():(root/name).write_bytes(text.encode('utf-8'))
+            fixtures.git(root,'init','-q');fixtures.git(root,'add','--all')
+            fixtures.git(root,'-c','user.name=Offline Fixture','-c','user.email=fixture@example.invalid',
+                '-c','commit.gpgsign=false','commit','-qm','synthetic offline fixture')
+            first=large.package(Path(folder)/'one',4096,2048,root=root)
+            second=large.package(Path(folder)/'two',4096,2048,root=root)
             self.assertEqual(first['archives'],second['archives'])
             self.assertEqual(first['files'],second['files'])
         self.assertEqual(audit.cleanup_plan([])['status'],'PROPOSAL ONLY')
