@@ -2,19 +2,20 @@
 
 **PREPARED — NOT AUTHORIZED FOR ACTIVATION**
 
-This review prepares a guarded workflow proposal for `oangsa/RoLauncher-release-sandbox` only. It does not authorize merging, enabling variables, signing, rerunning Publisher, or publishing a release.
+This review prepares a guarded workflow proposal for `oangsa/RoLauncher-release-sandbox` only. It does not authorize merging PR #21, promoting to `main`, enabling variables, signing, rerunning Publisher, or publishing a release.
 
 ## Baseline and dependency
 
-Read-only GitHub refresh on 2026-10-18 confirmed:
+GitHub API verification and the authorized PR #20 merge on 2026-10-18 confirmed:
 
 - Main: `b19226ccc5a28fe2632bf6d3c4d6f4b2eb9ab230`.
-- Dev: `ba09c98ee602f9da76ccdf935a6bf1f70125fc80`.
+- Dev is now `f5c36daca15d569e53eac651be9a795dd71fb9e6` after PR #20 merged.
 - PR #18 (capacity remediation) is merged to dev; PR #19 promoted it to main.
-- PR #20 (synthetic candidate preparation) remains open at `67f7bff270329090104b8d14c3bc37f6ec689dc0`, targeting dev. It was not modified or superseded.
-- No remote activation branch, tag, or Release exists. `phase-d/candidates/v0.0.900/` and `.github/release-intents/` are absent from this reviewed dev snapshot.
+- PR #20 merged its approved HEAD `67f7bff270329090104b8d14c3bc37f6ec689dc0` at `2026-10-18T11:42:32Z`; GitHub records merger `oangsa` (owner ID `71574088`). Merge parents are old dev `ba09c98ee602f9da76ccdf935a6bf1f70125fc80` and the approved PR head; tree `6e29794c49812979cf9c096bb083e292536465fa`.
+- Post-merge attempt 1 passed all five contexts on `f5c36daca15d569e53eac651be9a795dd71fb9e6`: CI and release run `39124329683`; Linux development port run `39124329675`.
+- PR #20 added only inert proposals under `phase-d/candidates/v0.0.900/`; `.github/release-intents/` remains absent. Dev and main still contain the Publisher literal hard-disable.
 
-The activation proposal is based on current dev while PR #20 is open. Rebase and rerun all checks after PR #20 is owner-merged or dev otherwise advances.
+PR #21 remains open and Draft. Its prior reviewed HEAD `b76684183aaae7072653316305e9a8c9e24435e9` used the old base; the synchronized PR HEAD, base, and test-merge SHA are recorded in the live PR metadata and body. Its branch now includes the PR #20 merge without history rewriting.
 
 ## Proposed changes
 
@@ -39,7 +40,7 @@ All three workflow stages execute the Phase D entry point. Its `main()` returns 
 
 For an official Linux main-push completion, `promote_event` checks the event against the current run, requires the same source SHA and run attempt, then requires exactly one matching successful CI run for that SHA. The candidate receipt and source artifacts remain bound to the CI run; signed evidence also binds the Linux run ID/attempt and the separate Publisher run ID/attempt. Stable admission rechecks that main still points to the source SHA before and after attendance and before publication.
 
-The workflow listens for `completed`; unsuccessful completions fail the job guard and the code independently checks current API status. Once the plan channel is passed into `promote_event`, unrelated workflow paths and a Beta completion under a stable plan fail before candidate admission. PR #20 has no active intent in this dev snapshot, so it cannot by itself authorize a publication.
+The workflow listens for `completed`; unsuccessful completions fail the job guard and the code independently checks current API status. Once the plan channel is passed into `promote_event`, unrelated workflow paths and a Beta completion under a stable plan fail before candidate admission. The candidate proposal is inert and `.github/release-intents/` remains absent, so PR #20 does not authorize publication.
 
 ### Rerun boundary
 
@@ -58,7 +59,7 @@ If both flags and an exact plan are enabled, an admitted release can reach only 
 3. `POST` uploads for missing verified setup, Windows archive, source archive, Linux archive, checksum, and `release-promotion.json` receipt assets.
 4. `PATCH /releases/{id}` to publish after final attendance and fresh readbacks.
 
-The wrapper rejects other write methods/routes, mismatched tag/release IDs/assets, and plans for another source/channel. It has no release deletion path. The workflow also uploads challenge and audit artifacts through the pinned Actions artifact action; those are workflow evidence artifacts, not release assets. No GitHub mutation was performed for this review.
+The wrapper rejects other write methods/routes, mismatched tag/release IDs/assets, and plans for another source/channel. It has no release deletion path. The workflow also uploads challenge and audit artifacts through the pinned Actions artifact action; those are workflow evidence artifacts, not release assets. The only GitHub mutation in this task was the authorized PR #20 merge into dev; no tag, Release, active intent, variable, or Publisher mutation was performed.
 
 ## Signed evidence, HTTP 403, and audit
 
@@ -73,7 +74,7 @@ Operational Publisher capacity remains fixed at 256 MiB per archive, 256 MiB per
 ## Preconditions and open items
 
 - `VARIABLE_STATE_NOT_VERIFIED`: GitHub’s approved read connector rejected the Actions variables endpoint. No variable was changed and no value is assumed. Before any future promotion into main, the owner must independently verify both activation flags are false/unset and `PHASE_D_OPERATION_PLAN` has no executable plan. Until then, main promotion is **BLOCKED**.
-- Source/intent readiness: **NOT READY**. PR #20 is open; there is no active candidate intent, reviewed candidate source SHA, trusted activation-main SHA, artifact run identity, or operation plan.
+- Source/intent readiness: **NOT READY**. PR #20 is merged, but only inert proposed intent/scope files exist; the active intent path is absent. No final candidate source SHA, trusted activation-main SHA, artifact run identity, or operation plan is ready.
 - The Draft PR body records exact head, base, test-merge SHA, and hosted context results; owner approval must verify all five contexts still match the current PR revision.
 - Live event delivery, owner signatures, artifact uploads, capacity at production-sized files, mutation denial, native immutability, and recovery behavior against GitHub: **NOT RUN**.
 - Published tags/Releases may be permanent or immutable. The owner must explicitly accept the exact `v0.0.900` fixture risk before any live fixture operation.
@@ -86,11 +87,12 @@ Operational Publisher capacity remains fixed at 256 MiB per archive, 256 MiB per
 | Focused simulated publisher plan-mismatch and successful lifecycle | PASS |
 | Audit ledger visibility and secret-redaction regression | PASS |
 | Actionlint v1.7.12, all six workflows | PASS |
-| Full `python scripts/offline_tests.py` | PASS — 135 tests |
+| Full `python scripts/offline_tests.py` | PASS — 140 tests |
 | Python AST syntax | PASS — 22 scripts |
 | Source artifact parser/tree verification | PASS — offline integration regressions |
 | Whitespace and workflow guard/permissions diff review | PASS |
-| Hosted PR contexts and exact test-merge SHA | See PR body; verify all five required contexts against the current PR head, base, and test-merge SHA before owner approval |
+| PR #20 post-merge CI | PASS — attempt 1 on merge SHA `f5c36daca15d569e53eac651be9a795dd71fb9e6`; CI/release `39124329683`, Linux development port `39124329675` |
+| PR #21 hosted contexts and exact test-merge SHA | Record the refreshed HEAD, base, test-merge SHA, all five context results, run IDs, attempts, and job conclusions in the live PR body before owner approval |
 
 ## Required default-branch warning
 

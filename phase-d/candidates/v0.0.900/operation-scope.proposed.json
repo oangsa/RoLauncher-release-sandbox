@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "repository_id": 1423257712,
+  "owner_id": 71574088,
+  "trusted_sha": null,
+  "source_sha": null,
+  "tag": "v0.0.900",
+  "channel": "stable",
+  "fault": null,
+  "faults_approved": false
+}

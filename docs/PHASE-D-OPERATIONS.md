@@ -3,15 +3,20 @@
 This is an operator runbook, not authority to execute. Existing [lifecycle acceptance](SANDBOX-RELEASE-LIFECYCLE.md) still applies.
 Implementation PR merges, activations, attendance, public signed posts, exact fixtures, real mutation/fault probes and cleanup require separate approval.
 
+## Current sandbox state
+
+PR #20 merged into `dev` at `f5c36daca15d569e53eac651be9a795dd71fb9e6`; all five post-merge contexts passed on attempt 1. It added only inert candidate proposal files under `phase-d/candidates/v0.0.900/`; `.github/release-intents/` remains absent. PR #21 remains Draft after synchronization with current `dev`; its exact refreshed HEAD, base, test-merge, and hosted checks must be reviewed before a separate owner approval. `main` remains `b19226ccc5a28fe2632bf6d3c4d6f4b2eb9ab230`. Variable state is `VARIABLE_STATE_NOT_VERIFIED`.
+
 ## Review and integration
 
-1. Review feature branch into dev; require all five exact contexts and owner-approved merge commit.
-2. Promote official dev to main; require exact test-merge checks and separate owner merge approval.
-3. Verify resulting main, policy, all five checks, artifact/source integrity and unchanged complete controls digest.
-4. Review readiness activation and Publisher activation as separate proposals; readiness dispatch is GET-only and does not authorize publication.
-5. After approved dispatch, record run/attempt/source, exact declarations and visibility results; missing bypass/immutability privilege is BLOCKED.
+1. Synchronize PR #21 with current `dev`; keep it Draft and rerun all five exact contexts.
+2. Obtain owner approval for the exact refreshed PR #21 HEAD before merging it through protected `dev`. Verify its merge commit and all five post-merge contexts.
+3. Before any `dev`-to-`main` activation promotion, an owner must read back both activation flags as false/unset and confirm the operation plan is absent or non-executable using an authorized authenticated interface. Unknown state blocks promotion.
+4. Separately approve and merge the exact activation promotion through protected governance. Immediately after installation on `main`, re-read main SHA, Publisher workflow, both disabled flags, and operation-plan state.
+5. Verify resulting main, policy, all five checks, artifact/source integrity, and unchanged complete controls digest before a separately authorized intent or operational event.
+6. Review readiness activation and Publisher activation as separate proposals; readiness dispatch is GET-only and does not authorize publication.
 
-This branch proposes the Publisher guard behind two explicit runtime variables; it is not authority to merge or enable them. Historical PoC and Beta workflows stay hard-disabled.
+This branch's Publisher proposal is not authorization to merge PR #21, promote to main, enable flags, configure a plan, or publish. Historical PoC and Beta workflows stay hard-disabled.
 
 ## Publication approval sequence
 
