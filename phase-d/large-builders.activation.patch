@@ -1,0 +1,27 @@
+--- a/.github/workflows/ci-release.yml
++++ b/.github/workflows/ci-release.yml
+@@ -50,7 +50,11 @@
+       - name: Offline authority, signature and fixture regressions
+         run: python scripts/offline_tests.py
+       - name: Package inert windows fixtures from exact source
+-        run: python scripts/sandbox_fixtures.py windows --output dist
++        run: |
++          python scripts/phase_d_fixtures.py --output phase-d-large
++          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
++          New-Item -ItemType Directory -Force dist | Out-Null
++          Copy-Item phase-d-large/payload/rolauncher-v*-setup-x64.exe,phase-d-large/payload/rolauncher-v*-windows-x64.zip,phase-d-large/payload/rolauncher-v*-source.zip,phase-d-large/payload/rolauncher-v*-SHA256SUMS.txt dist/
+       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+         with:
+@@ -82,7 +86,10 @@
+       - name: Offline authority, signature and fixture regressions
+         run: python scripts/offline_tests.py
+       - name: Package inert linux fixtures from exact source
+-        run: python scripts/sandbox_fixtures.py linux --output dist
++        run: |
++          python scripts/phase_d_fixtures.py --output phase-d-large
++          mkdir -p dist
++          cp phase-d-large/payload/rolauncher-v*-linux-* dist/
+       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+         with:

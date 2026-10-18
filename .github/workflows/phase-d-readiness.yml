@@ -1,0 +1,43 @@
+name: Phase D read-only readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect publisher permission visibility
+    if: >-
+      false &&
+      github.repository == 'oangsa/RoLauncher-release-sandbox' &&
+      github.repository_id == '1423257712' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Same declarations as publisher; script has only GET calls and never signs.
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Read metadata visibility without privileged inference
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PHASE_D_READ_ONLY_AUTHORIZED: 'true'
+        run: python scripts/phase_d_readiness.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase-d-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: phase-d-readiness.json
+          if-no-files-found: error
+          retention-days: 14

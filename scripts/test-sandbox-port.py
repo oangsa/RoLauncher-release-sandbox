@@ -190,7 +190,8 @@ class PortTests(unittest.TestCase):
         enabled = {('ci-release.yml', 'branch-flow'), ('ci-release.yml', 'windows-checks'),
                    ('ci-release.yml', 'linux-checks'), ('linux.yml', 'linux-checks')}
         disabled = {('beta-release.yml', 'windows-checks'), ('beta-release.yml', 'linux-checks'),
-                    ('release-promotion.yml', 'promote'), ('owner-evidence-dry-run.yml', 'verify')}
+                    ('release-promotion.yml', 'promote'), ('owner-evidence-dry-run.yml', 'verify'),
+                    ('phase-d-readiness.yml', 'inspect')}
         seen = set()
         for workflow in (ROOT / '.github/workflows').glob('*.yml'):
             text = workflow.read_text()
@@ -214,9 +215,15 @@ class PortTests(unittest.TestCase):
             self.assertNotIn('administration:', text)
             for action in re.findall(r'uses: (\S+)', text):
                 self.assertRegex(action, r'^[\w./-]+@[a-f0-9]{40}$')
-            if workflow.name != 'release-promotion.yml':
+            if workflow.name not in ('release-promotion.yml','phase-d-readiness.yml'):
                 self.assertNotIn('contents: write', text)
+            if workflow.name != 'release-promotion.yml':
                 self.assertNotIn('scripts/publish-', text)
+            if workflow.name=='phase-d-readiness.yml':
+                self.assertIn('  workflow_dispatch:',text)
+                self.assertNotIn('  push:',text)
+                self.assertNotIn('workflow_run:',text)
+                self.assertIn('run: python scripts/phase_d_readiness.py',text)
             if workflow.name in ('ci-release.yml', 'linux.yml'):
                 self.assertIn('permissions:\n  contents: read\n', text)
                 self.assertIn('scripts/offline_tests.py', text)

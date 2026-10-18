@@ -1,0 +1,45 @@
+--- a/.github/workflows/release-promotion.yml
++++ b/.github/workflows/release-promotion.yml
+@@ -17,8 +17,8 @@
+   promote:
+     name: Verify authority and promote
+     if: >-
+-      false &&
+       vars.RELEASE_PROMOTION_ENABLED == 'true' &&
++      vars.PHASE_D_LIVE_AUTHORIZED == 'true' &&
+       github.repository == 'oangsa/RoLauncher-release-sandbox' &&
+       github.repository_id == '1423257712' &&
+       github.event.workflow_run.event == 'push' &&
+@@ -44,7 +44,9 @@
+         env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           RELEASE_PROMOTION_ENABLED: ${{ vars.RELEASE_PROMOTION_ENABLED }}
+-        run: python3 scripts/release_promotion.py --stage prepare
++          PHASE_D_LIVE_AUTHORIZED: ${{ vars.PHASE_D_LIVE_AUTHORIZED }}
++          PHASE_D_OPERATION_PLAN: ${{ vars.PHASE_D_OPERATION_PLAN }}
++        run: python3 scripts/phase_d_publisher.py --stage prepare
+       - name: Publish preflight challenge artifact
+         if: steps.admission.outputs.admitted == 'true'
+         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+@@ -58,7 +60,9 @@
+         env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           RELEASE_PROMOTION_ENABLED: ${{ vars.RELEASE_PROMOTION_ENABLED }}
+-        run: python3 scripts/release_promotion.py --stage stage
++          PHASE_D_LIVE_AUTHORIZED: ${{ vars.PHASE_D_LIVE_AUTHORIZED }}
++          PHASE_D_OPERATION_PLAN: ${{ vars.PHASE_D_OPERATION_PLAN }}
++        run: python3 scripts/phase_d_publisher.py --stage stage
+       - name: Publish final challenge artifact
+         if: steps.admission.outputs.admitted == 'true'
+         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+@@ -72,7 +76,9 @@
+         env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           RELEASE_PROMOTION_ENABLED: ${{ vars.RELEASE_PROMOTION_ENABLED }}
+-        run: python3 scripts/release_promotion.py --stage finish
++          PHASE_D_LIVE_AUTHORIZED: ${{ vars.PHASE_D_LIVE_AUTHORIZED }}
++          PHASE_D_OPERATION_PLAN: ${{ vars.PHASE_D_OPERATION_PLAN }}
++        run: python3 scripts/phase_d_publisher.py --stage finish
+       - name: Preserve challenge and acceptance audit
+         if: always() && steps.admission.outputs.admitted == 'true'
+         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
