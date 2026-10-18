@@ -57,6 +57,9 @@ TDD reproduced the old generic-403 acceptance before implementation. Mocked regr
   - Run `39103414239`: Linux checks (Ubuntu) and Linux checks (Arch).
   - All five job logs show test-merge SHA `2adc7c1bca093d60dfbb28af96d575e374f00b92`, combining that candidate with base `5363247c87044841ab5a51a3915db6d4f408241f`; no job was skipped.
 - `git diff --check`: **NOT RUN**; the materialized copy reports it is not a work tree for diff operations. The equivalent whitespace scan passed.
+## Unresolved operational blockers
+
+The original positive 2× capacity blocker remains unresolved, and the prior live readiness result remains `BLOCKED`. No live owner signing, signed evidence posting, synthetic publication, recovery exercise, or immutable-resource enforcement test was performed. This code review does not satisfy those operational acceptance steps.
 ## Contract changes and next authorization
 
 The existing authorization contract is preserved: this permission classification permits only an owner-attested setting observation after the existing signed evidence checks. It does not relax source admission, expand publication scope, change credentials, or activate Publisher, Beta, readiness, or historical PoC workflows. There is no new proposed contract change.
