@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 import warnings
 import zipfile
@@ -29,7 +30,12 @@ class FixtureEvidence:
 
 
 def promote(call, run):
-    return release_promotion.promote(call, run, FixtureEvidence())
+    from phase_d_capacity import ArtifactWorkspace
+    workspace = ArtifactWorkspace(release_promotion.capacity_policy(), parent=Path(__file__).resolve().parents[1])
+    try:
+        return release_promotion.promote(call, run, FixtureEvidence(), workspace=workspace)
+    finally:
+        workspace.close()
 
 
 def promote_event(call, event, channel=None):
@@ -126,6 +132,8 @@ class GitHubFixture:
             if path.startswith("https://uploads.github.com/"):
                 name = path.split("?name=")[1]
                 data = kwargs["binary"]
+                if hasattr(data, "read_bytes"):
+                    data = data.read_bytes()
                 asset_id = 100 + len(self.assets)
                 self.assets[name] = dict(id=asset_id, name=name, size=len(data),
                                          digest="sha256:" + hashlib.sha256(data).hexdigest(), data=data)
@@ -268,6 +276,58 @@ class PromotionTests(unittest.TestCase):
                 with patch.multiple(release_promotion, **limits):
                     with self.assertRaisesRegex(ValueError, "limit"): promote(github, github.run)
                 self.assertEqual(github.writes, [])
+
+    def test_artifact_parser_returns_disk_backed_assets_from_bounded_workspace(self):
+        from phase_d_capacity import DEFAULT_CAPACITY, ArtifactWorkspace, ArtifactFile
+
+        github = GitHubFixture().with_intent()
+        workspace = ArtifactWorkspace(DEFAULT_CAPACITY, parent=Path(__file__).resolve().parents[1])
+        self.addCleanup(workspace.close)
+        prefix = "rolauncher-v2.3.4"
+        compatibility_files, _ = release_promotion.artifact_files(github, github.run, "2.3.4")
+        self.assertIsInstance(compatibility_files[prefix + "-setup-x64.exe"], bytes)
+        files, provenance = release_promotion.staged_artifact_files(
+            github, github.run, "2.3.4", False, workspace)
+        self.assertEqual(len(provenance), 2)
+        self.assertIsInstance(files[prefix + "-setup-x64.exe"], ArtifactFile)
+        self.assertEqual(files[prefix + "-setup-x64.exe"].path.read_bytes(), b"synthetic -setup-x64.exe")
+        self.assertLessEqual(workspace.disk_bytes, DEFAULT_CAPACITY.max_temp_disk_bytes)
+
+    def test_promote_rejects_benchmark_capacity_before_transport_or_mutation(self):
+        from phase_d_capacity import ArtifactWorkspace, TWO_X_STRESS_TEST_CAPACITY
+
+        github = GitHubFixture().with_intent()
+        workspace = ArtifactWorkspace(TWO_X_STRESS_TEST_CAPACITY,
+                                      parent=Path(__file__).resolve().parents[1])
+        self.addCleanup(workspace.close)
+        with self.assertRaisesRegex(ValueError, "operational capacity policy"):
+            release_promotion.promote(github, github.run, FixtureEvidence(), workspace=workspace)
+        self.assertEqual(github.writes, [])
+
+    def test_promote_through_frozen_audited_transport_stages_disk_backed_assets(self):
+        import phase_d
+        import phase_d_publisher
+        from phase_d_capacity import ArtifactFile
+
+        github = GitHubFixture().with_intent()
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as folder:
+            ledger = Path(folder) / "promotion.jsonl"
+
+            def backend(path, method="GET", body=None, **kwargs):
+                binary = kwargs.get("binary")
+                if isinstance(binary, ArtifactFile):
+                    kwargs["binary"] = binary.read_bytes()
+                return github(path, method, body, **kwargs)
+
+            audited = phase_d.AuditedTransport(backend, ledger)
+            try:
+                call = phase_d_publisher.FrozenArtifacts(audited)
+                self.assertEqual(promote(call, github.run), "published")
+                self.assertEqual(len(github.assets), 6)
+                self.assertEqual(github.writes[-1][1], "PATCH")
+                self.assertTrue(ledger.is_file())
+            finally:
+                audited.close()
 
     def test_visible_tag_bypasses_cannot_weaken_immutable_tags(self):
         for actor in ("Integration", "RepositoryRole", "User", "DeployKey"):

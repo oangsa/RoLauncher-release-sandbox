@@ -66,6 +66,7 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(writes,['/releases/50'])
     def test_large_fixture_capacity_and_streamed_bytes(self):
         import phase_d_fixtures as large
+        from phase_d_capacity import DEFAULT_CAPACITY, TWO_X_STRESS_TEST_CAPACITY
         with tempfile.TemporaryDirectory() as folder:
             target=Path(folder)/'inert.bin'
             large.write_inert(target,4096)
@@ -74,6 +75,46 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(target.read_bytes()[100:],bytes(3996))
             with self.assertRaises(ValueError):large.capacity(512*1024**2,256*1024**2)
             self.assertEqual(large.capacity(256*1024**2,128*1024**2)['windows_bytes'],256*1024**2)
+            stress=large.capacity(512*1024**2,256*1024**2,profile='2x-test')
+            self.assertEqual(stress['entry_limit'],TWO_X_STRESS_TEST_CAPACITY.max_entry_bytes)
+            self.assertEqual(DEFAULT_CAPACITY.max_archive_bytes,256*1024**2)
+            self.assertEqual(DEFAULT_CAPACITY.max_entry_bytes,256*1024**2)
+            self.assertEqual(DEFAULT_CAPACITY.max_expanded_bytes,512*1024**2)
+
+    def test_capacity_workspace_enforces_file_aggregate_disk_and_time_limits(self):
+        from phase_d_capacity import ArtifactWorkspace, CapacityPolicy
+
+        policy = CapacityPolicy(max_archive_bytes=8, max_entry_bytes=4, max_expanded_bytes=6,
+            max_temp_disk_bytes=9, max_buffer_bytes=4, max_processing_seconds=1)
+        with tempfile.TemporaryDirectory() as folder:
+            with ArtifactWorkspace(policy, parent=folder) as workspace:
+                archive = workspace.sink('archive.zip', 9, 'archive')
+                with self.assertRaisesRegex(ValueError, 'size limit'):
+                    archive.write(b'123456789')
+                archive.abort()
+
+                expanded = workspace.sink('expanded.bin', 4, 'expanded')
+                expanded.write(b'1234')
+                staged = workspace.sink('staged.bin', 6, 'staging')
+                staged.write(b'1234')
+                with self.assertRaisesRegex(ValueError, 'disk budget'):
+                    staged.write(b'56')
+                staged.abort()
+                expanded.finish()
+
+                remainder = workspace.sink('remainder.bin', 4, 'expanded')
+                remainder.write(b'12')
+                remainder.finish()
+                over_expanded = workspace.sink('over-expanded.bin', 1, 'expanded')
+                with self.assertRaisesRegex(ValueError, 'decompression size'):
+                    over_expanded.write(b'x')
+                over_expanded.abort()
+                abandoned = workspace.sink('abandoned.bin', 4, 'staging')
+                abandoned.write(b'x')
+                workspace.started -= 2
+                with self.assertRaisesRegex(TimeoutError, 'time limit'):
+                    workspace.check_deadline()
+            self.assertFalse(workspace.root.exists())
 
     def test_scaled_large_archives_repeat_deterministically_and_cleanup_is_plan_only(self):
         import phase_d_fixtures as large
@@ -120,6 +161,7 @@ class AuditTests(unittest.TestCase):
             return dict(truncated=False,tree=[dict(path='AGENTS.md',mode='100644',type='blob',
                 sha=hashlib.sha1(b'blob 13\0'+content).hexdigest())])
         cached=live.FrozenArtifacts(backend)
+        self.addCleanup(cached.close)
         binding=dict(source=dict(id=12,run_attempt=1,head_sha='a'*40),intent=dict(version='0.0.900',channel='stable'))
         live.verify_source_artifact(cached,binding)
         live.verify_source_artifact(cached,binding)
@@ -139,6 +181,67 @@ class AuditTests(unittest.TestCase):
             api=promotion.github_api('disposable-not-a-credential',observer=statuses.append)
             self.assertEqual(api('/releases','POST',{'draft':True}),{'id':50})
         self.assertEqual(statuses,[201])
+
+    def test_raw_download_streams_bounded_chunks_into_private_file(self):
+        from phase_d_capacity import ArtifactWorkspace, DEFAULT_CAPACITY
+        payload=b'bounded-download-fixture'
+        class Response(io.BytesIO):
+            headers={'Content-Length':str(len(payload))}
+            status=200
+            reads=[]
+            def geturl(self):return self.url
+            def read(self,size=-1):
+                self.reads.append(size)
+                return super().read(size)
+        responses=[]
+        class Connection:
+            def open(self,request,timeout):
+                response=Response(payload)
+                response.url=request.full_url
+                responses.append(response)
+                return response
+        workspace=ArtifactWorkspace(DEFAULT_CAPACITY,parent=Path(__file__).resolve().parents[1])
+        self.addCleanup(workspace.close)
+        sink=workspace.sink('download.zip',64,'archive')
+        with patch.object(promotion,'build_opener',return_value=Connection()):
+            self.assertIsNone(promotion.github_api('disposable-download-token')(
+                '/actions/artifacts/30/zip',raw=True,sink=sink))
+        downloaded=sink.finish()
+        self.assertEqual((downloaded.size,downloaded.sha256),
+            (len(payload),hashlib.sha256(payload).hexdigest()))
+        self.assertEqual(responses[0].reads,[DEFAULT_CAPACITY.max_buffer_bytes,DEFAULT_CAPACITY.max_buffer_bytes])
+
+    def test_release_upload_streams_file_chunks_without_request_body_buffer(self):
+        from phase_d_capacity import ArtifactWorkspace, DEFAULT_CAPACITY, MiB
+        payload=(b'bounded-upload-fixture'*(2*MiB//22+1))[:2*MiB+17]
+        workspace=ArtifactWorkspace(DEFAULT_CAPACITY,parent=Path(__file__).resolve().parents[1])
+        self.addCleanup(workspace.close)
+        artifact=workspace.write_bytes('payload.bin',payload,len(payload),'staging')
+        sent=[]
+        class Response(io.BytesIO):
+            status=201
+            headers={'Content-Length':'9'}
+        connections=[]
+        class Connection:
+            def __init__(self,host,port,timeout,context):
+                self.headers={};self.target=None;connections.append(self)
+            def putrequest(self,method,target):self.method,self.target=method,target
+            def putheader(self,key,value):self.headers[key]=value
+            def endheaders(self):pass
+            def send(self,chunk):sent.append(bytes(chunk))
+            def getresponse(self):return Response(b'{"id":50}')
+            def close(self):pass
+        api=promotion.github_api('disposable-upload-token')
+        with patch.object(promotion.http.client,'HTTPSConnection',Connection):
+            result=api(
+                'https://uploads.github.com/repos/'+evidence.REPO+
+                '/releases/50/assets?name=fixture.bin','POST',binary=artifact)
+        self.assertEqual(result,{'id':50})
+        self.assertGreater(len(sent),1)
+        self.assertTrue(all(0<len(chunk)<=promotion.COPY_BYTES for chunk in sent))
+        self.assertEqual(b''.join(sent),payload)
+        self.assertEqual(connections[0].headers['Content-Length'],str(len(payload)))
+        self.assertEqual(connections[0].target,'/repos/'+evidence.REPO+'/releases/50/assets?name=fixture.bin')
 
     def test_http_failure_matrix_is_sanitized_and_never_permission_classified(self):
         cases=(

@@ -1,0 +1,249 @@
+{
+  "comparisons": {
+    "operational_legacy": {
+      "reason": "legacy memory preflight would violate the configured reserve",
+      "status": "NOT RUN"
+    },
+    "operational_streaming": {
+      "archive_bytes": 302239940,
+      "cpu_seconds": 3.5,
+      "expanded_bytes": 302532959,
+      "files": {
+        "rolauncher-v0.0.900-SHA256SUMS.txt": {
+          "sha256": "e6afbb46f7c9f100bc4463b4e79bec0a891943eb28b657e9d10b44de89b4c941",
+          "size": 402
+        },
+        "rolauncher-v0.0.900-linux-x64.tar.gz": {
+          "sha256": "eb261802edd3206ef823af685b3fd6331ace2f7be3e77a35410b4d5199bf8757",
+          "size": 100679703
+        },
+        "rolauncher-v0.0.900-setup-x64.exe": {
+          "sha256": "1c2e74e871f96c66efc04c6c65bf403219cb7467e625eea379ab3c49a176c1ad",
+          "size": 201326592
+        },
+        "rolauncher-v0.0.900-source.zip": {
+          "sha256": "024791db9b698dc51b893924903f3e137c64e0f2bca0bc5e245a4d7a4d55f01c",
+          "size": 482494
+        },
+        "rolauncher-v0.0.900-windows-x64.zip": {
+          "sha256": "e3813feba35c632b87040e381d269f80a6015bf12d91e3b02e214bd81c6a3255",
+          "size": 43764
+        }
+      },
+      "input_mib_per_second": 30.86,
+      "largest_read_chunk_bytes": 1048576,
+      "mode": "streaming parser",
+      "peak_rss_bytes": 32362496,
+      "peak_temp_disk_bytes": 604772899,
+      "profile": "operational",
+      "provenance": [
+        {
+          "digest": "sha256:b0529c980fd7e36c9038776a003f7a987c0bd7a68ee0dd1bca9c937115630b2e",
+          "id": 30,
+          "name": "release-files-attempt-1"
+        },
+        {
+          "digest": "sha256:8e4ca850ec2dcaf682bcfd435c5725146ad19a3dfbffbe1a41aff4723ccb97f7",
+          "id": 31,
+          "name": "release-linux-files-attempt-1"
+        }
+      ],
+      "wall_seconds": 9.338818899996113
+    },
+    "two_x_streaming": {
+      "archive_bytes": 805727033,
+      "cpu_seconds": 9.234375,
+      "expanded_bytes": 805866504,
+      "files": {
+        "rolauncher-v0.0.900-SHA256SUMS.txt": {
+          "sha256": "82c6d329253a424f132ad82aa9ef7affc0ba0a0cc896d724fe97c913924b3987",
+          "size": 402
+        },
+        "rolauncher-v0.0.900-linux-x64.tar.gz": {
+          "sha256": "96ed5af5a7165d7ceb24ada37abeafef335a1a91ff4d8e5f2a90c1256d90db28",
+          "size": 268468928
+        },
+        "rolauncher-v0.0.900-setup-x64.exe": {
+          "sha256": "a869793082211c7ae8681d0f090822bf202f98a4e1bd4308cde4a2081d97aa37",
+          "size": 536870912
+        },
+        "rolauncher-v0.0.900-source.zip": {
+          "sha256": "024791db9b698dc51b893924903f3e137c64e0f2bca0bc5e245a4d7a4d55f01c",
+          "size": 482494
+        },
+        "rolauncher-v0.0.900-windows-x64.zip": {
+          "sha256": "e3813feba35c632b87040e381d269f80a6015bf12d91e3b02e214bd81c6a3255",
+          "size": 43764
+        }
+      },
+      "input_mib_per_second": 64.09,
+      "largest_read_chunk_bytes": 1048576,
+      "mode": "streaming parser",
+      "peak_rss_bytes": 32677888,
+      "peak_temp_disk_bytes": 1611593537,
+      "profile": "2x-test",
+      "provenance": [
+        {
+          "digest": "sha256:a7a2c6505bf3a7467ca81264cdf7fc555f737932b498b5b25a0e400fec5ab114",
+          "id": 30,
+          "name": "release-files-attempt-1"
+        },
+        {
+          "digest": "sha256:f0422f8b0b060f00620d267cfc468f88d62f5c47c6abf38c0645e12fc0bb00e1",
+          "id": 31,
+          "name": "release-linux-files-attempt-1"
+        }
+      ],
+      "wall_seconds": 11.989386200002627
+    }
+  },
+  "elapsed_seconds": 119.2,
+  "fixture_manifests": {
+    "operational": {
+      "aggregate_limit": 536870912,
+      "archive_limit": 268435456,
+      "archives": [
+        {
+          "name": "release-files-attempt-1.zip",
+          "sha256": "b0529c980fd7e36c9038776a003f7a987c0bd7a68ee0dd1bca9c937115630b2e",
+          "size": 201534908
+        },
+        {
+          "name": "release-linux-files-attempt-1.zip",
+          "sha256": "8e4ca850ec2dcaf682bcfd435c5725146ad19a3dfbffbe1a41aff4723ccb97f7",
+          "size": 100705032
+        }
+      ],
+      "entropy": "deterministic SHAKE-256 pseudorandom",
+      "entry_limit": 268435456,
+      "evidence": "LOCAL GENERATED ONLY; no Actions upload or release mutation",
+      "expanded_bytes": 302532959,
+      "files": {
+        "rolauncher-v0.0.900-SHA256SUMS.txt": {
+          "sha256": "49954eff0777386af4803a8a34d24585e83f27956dc0729f885e6929eadcee6c",
+          "size": 302
+        },
+        "rolauncher-v0.0.900-linux-SHA256SUMS.txt": {
+          "sha256": "cda8c168e3cd7795c50ffb153382d3b7d02d924bcf0867c1d12f2cb21119c813",
+          "size": 104
+        },
+        "rolauncher-v0.0.900-linux-x64.tar.gz": {
+          "sha256": "eb261802edd3206ef823af685b3fd6331ace2f7be3e77a35410b4d5199bf8757",
+          "size": 100679703
+        },
+        "rolauncher-v0.0.900-setup-x64.exe": {
+          "sha256": "1c2e74e871f96c66efc04c6c65bf403219cb7467e625eea379ab3c49a176c1ad",
+          "size": 201326592
+        },
+        "rolauncher-v0.0.900-source.zip": {
+          "sha256": "024791db9b698dc51b893924903f3e137c64e0f2bca0bc5e245a4d7a4d55f01c",
+          "size": 482494
+        },
+        "rolauncher-v0.0.900-windows-x64.zip": {
+          "sha256": "e3813feba35c632b87040e381d269f80a6015bf12d91e3b02e214bd81c6a3255",
+          "size": 43764
+        }
+      },
+      "fixture_algorithm": "SHAKE-256(seed, counter), generated in <=1 MiB chunks",
+      "fixture_seed": 71574088,
+      "linux_payload_bytes": 100663296,
+      "profile": "operational defaults",
+      "source": "b5737bfb8a19d78a85ab3aad24997bd1b01a77b9",
+      "two_x": "BLOCKED under operational defaults",
+      "windows_bytes": 201326592
+    },
+    "two_x": {
+      "aggregate_limit": 1073741824,
+      "archive_limit": 805306368,
+      "archives": [
+        {
+          "name": "release-files-attempt-1.zip",
+          "sha256": "a7a2c6505bf3a7467ca81264cdf7fc555f737932b498b5b25a0e400fec5ab114",
+          "size": 537181583
+        },
+        {
+          "name": "release-linux-files-attempt-1.zip",
+          "sha256": "f0422f8b0b060f00620d267cfc468f88d62f5c47c6abf38c0645e12fc0bb00e1",
+          "size": 268545450
+        }
+      ],
+      "entropy": "deterministic SHAKE-256 pseudorandom",
+      "entry_limit": 536870912,
+      "evidence": "LOCAL GENERATED ONLY; no Actions upload or release mutation",
+      "expanded_bytes": 805866504,
+      "files": {
+        "rolauncher-v0.0.900-SHA256SUMS.txt": {
+          "sha256": "361122f882f97789ea4814c1da99e23277389737c89ea360b2f7880b053f0839",
+          "size": 302
+        },
+        "rolauncher-v0.0.900-linux-SHA256SUMS.txt": {
+          "sha256": "1b824ee1cd786881d6ef432e1511818104577dbb53a7ba62471e100d6c4c928f",
+          "size": 104
+        },
+        "rolauncher-v0.0.900-linux-x64.tar.gz": {
+          "sha256": "96ed5af5a7165d7ceb24ada37abeafef335a1a91ff4d8e5f2a90c1256d90db28",
+          "size": 268468928
+        },
+        "rolauncher-v0.0.900-setup-x64.exe": {
+          "sha256": "a869793082211c7ae8681d0f090822bf202f98a4e1bd4308cde4a2081d97aa37",
+          "size": 536870912
+        },
+        "rolauncher-v0.0.900-source.zip": {
+          "sha256": "024791db9b698dc51b893924903f3e137c64e0f2bca0bc5e245a4d7a4d55f01c",
+          "size": 482494
+        },
+        "rolauncher-v0.0.900-windows-x64.zip": {
+          "sha256": "e3813feba35c632b87040e381d269f80a6015bf12d91e3b02e214bd81c6a3255",
+          "size": 43764
+        }
+      },
+      "fixture_algorithm": "SHAKE-256(seed, counter), generated in <=1 MiB chunks",
+      "fixture_seed": 71574088,
+      "linux_payload_bytes": 268435456,
+      "profile": "local 2x stress test only",
+      "source": "b5737bfb8a19d78a85ab3aad24997bd1b01a77b9",
+      "two_x": "isolated test capacity; never used by Publisher",
+      "windows_bytes": 536870912
+    }
+  },
+  "hosted_ci": "NOT RUN",
+  "live_github_transfer": "NOT RUN",
+  "live_publisher": "NOT RUN",
+  "preflight": {
+    "available_memory_bytes": 1364807680,
+    "free_disk_bytes": 15306678272,
+    "github_requests": 0,
+    "legacy_simulation_available": false,
+    "legacy_simulation_memory_required_bytes": 3221225472,
+    "output": "local-output-path-redacted",
+    "profile": "2x-test",
+    "publisher_calls": 0,
+    "required_disk_bytes": 7516192768,
+    "required_memory_bytes": 1342177280
+  },
+  "profile": "local 2x streaming stress; no live API or Publisher",
+  "source": "b5737bfb8a19d78a85ab3aad24997bd1b01a77b9",
+  "status": "PASS",
+  "working_tree_note": "Final Phase D capacity source and tests used to prepare the PR; documentation records these measurements.",
+  "benchmark_attempts": [
+    {
+      "date": "2026-10-18",
+      "status": "BLOCKED",
+      "available_memory_bytes": 1169326080,
+      "required_memory_bytes": 1342177280,
+      "fixtures_created": false,
+      "github_requests": 0,
+      "publisher_calls": 0
+    },
+    {
+      "date": "2026-10-18",
+      "status": "PASS",
+      "available_memory_bytes": 1364807680,
+      "required_memory_bytes": 1342177280,
+      "fixtures_created": true,
+      "report": "This file",
+      "github_requests": 0,
+      "publisher_calls": 0
+    }
+  ]
+}

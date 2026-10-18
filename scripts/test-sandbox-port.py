@@ -28,6 +28,14 @@ PRODUCTION = 'oangsa/RoLauncher'
 SANDBOX = 'oangsa/RoLauncher-release-sandbox'
 REPO_ID = 1423257712
 
+# promote deliberately diverges from the production byte-only implementation to
+# require bounded, file-backed staging for the Phase D publisher path. Keep that
+# reviewed adaptation pinned independently while every other protected function
+# remains pinned to the production contract.
+REVIEWED_AST_DIVERGENCES = {
+    ('release_promotion.py', 'promote'): '0d7b095b1018eacecdd5270ed86832727d0006fe6ab13d5b5b58c6c8f6e12a46',
+}
+
 spec = importlib.util.spec_from_file_location('sandbox_reference', Path(__file__).with_name('test-release-promotion.py'))
 reference = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reference)
@@ -47,7 +55,7 @@ class PortTests(unittest.TestCase):
             with self.subTest(args=args), self.assertRaises(AssertionError):
                 subprocess.run(args, **options)
 
-    def test_all_unchanged_security_functions_match_pinned_production_ast(self):
+    def test_security_functions_match_pinned_production_or_reviewed_phase_d_ast(self):
         contract = json.loads((ROOT / 'tests/production-contract.json').read_text())
         self.assertEqual(contract['revision'], '193c465e4d5999506f8c406ac45ff3e88d1a1a94')
         count = 0
@@ -56,7 +64,8 @@ class PortTests(unittest.TestCase):
             nodes = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
             for name, expected in record['ast_sha256'].items():
                 actual = hashlib.sha256(ast.dump(nodes[name], include_attributes=False).encode()).hexdigest()
-                self.assertEqual(actual, expected, filename + ':' + name)
+                reviewed = REVIEWED_AST_DIVERGENCES.get((filename, name))
+                self.assertEqual(actual, reviewed or expected, filename + ':' + name)
                 count += 1
         self.assertGreater(count, 30)
 
