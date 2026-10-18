@@ -27,6 +27,14 @@ ROOT = Path(__file__).resolve().parent.parent
 PRODUCTION = 'oangsa/RoLauncher'
 SANDBOX = 'oangsa/RoLauncher-release-sandbox'
 REPO_ID = 1423257712
+SYNTHETIC_INTENTS = {
+    '0db2788e-d5f3-478f-9f77-6d6d0dd064f4':
+        dict(schema=1, id='0db2788e-d5f3-478f-9f77-6d6d0dd064f4',
+             version='0.0.900', channel='stable'),
+    '3f3529f1-8d6d-45ae-93bf-b712b391e44d':
+        dict(schema=1, id='3f3529f1-8d6d-45ae-93bf-b712b391e44d',
+             version='0.0.901', channel='stable'),
+}
 
 # promote deliberately diverges from the production byte-only implementation to
 # require bounded, file-backed staging for the Phase D publisher path. Keep that
@@ -95,19 +103,39 @@ class PortTests(unittest.TestCase):
                          'SHA256:jG13DdI7llxXe3kfcJ2xnu8kftf2xe41QMv8hYkuuiQ')
 
     def test_only_the_expected_synthetic_intent_may_be_active(self):
-        intent_dir = ROOT / '.github/release-intents'
-        expected_path = intent_dir / '0db2788e-d5f3-478f-9f77-6d6d0dd064f4.json'
+        self.assert_expected_synthetic_intents(ROOT / '.github/release-intents')
+
+    def assert_expected_synthetic_intents(self, intent_dir):
+        historical_path = intent_dir / '0db2788e-d5f3-478f-9f77-6d6d0dd064f4.json'
+        pending_path = intent_dir / '3f3529f1-8d6d-45ae-93bf-b712b391e44d.json'
+        self.assertTrue(historical_path.is_file(), 'historical v0.0.900 intent is required')
+        expected_paths = [historical_path]
+        if pending_path.exists():
+            expected_paths.append(pending_path)
         active_intents = sorted(intent_dir.iterdir()) if intent_dir.exists() else []
-        if not active_intents:
-            return
-        self.assertEqual(active_intents, [expected_path])
-        self.assertTrue(expected_path.is_file())
-        self.assertFalse(expected_path.is_symlink())
-        intent = json.loads(expected_path.read_text(encoding='utf-8'))
-        self.assertIsInstance(intent, dict)
-        self.assertIs(type(intent.get('schema')), int)
-        self.assertEqual(intent, dict(schema=1, id='0db2788e-d5f3-478f-9f77-6d6d0dd064f4',
-                                     version='0.0.900', channel='stable'))
+        self.assertEqual(active_intents, sorted(expected_paths))
+        for path in expected_paths:
+            self.assertTrue(path.is_file())
+            self.assertFalse(path.is_symlink())
+            intent = json.loads(path.read_text(encoding='utf-8'))
+            self.assertIsInstance(intent, dict)
+            self.assertIs(type(intent.get('schema')), int)
+            self.assertEqual(intent, SYNTHETIC_INTENTS[path.stem])
+
+    def test_synthetic_intent_allowlist_accepts_pending_and_rejects_unlisted_ids(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            intent_dir = Path(folder)
+            for intent_id, intent in SYNTHETIC_INTENTS.items():
+                (intent_dir / (intent_id + '.json')).write_text(
+                    json.dumps(intent), encoding='utf-8')
+            self.assert_expected_synthetic_intents(intent_dir)
+            unlisted_id = '9f8c5808-3a4d-482b-859d-6279845f0040'
+            (intent_dir / (unlisted_id + '.json')).write_text(
+                json.dumps(dict(schema=1, id=unlisted_id,
+                                version='0.0.902', channel='stable')),
+                encoding='utf-8')
+            with self.assertRaises(AssertionError):
+                self.assert_expected_synthetic_intents(intent_dir)
 
     def test_production_and_foreign_absolute_endpoints_rejected_before_transport(self):
         forbidden = [
