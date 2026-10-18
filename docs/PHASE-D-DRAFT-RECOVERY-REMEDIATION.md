@@ -62,8 +62,8 @@ The proposed PR must be checked against its exact HEAD. The five hosted contexts
 ## Owner actions remaining
 
 1. Review the remediation PR's exact head, source diff, local test record, and all hosted CI contexts. Merge to `dev` only through the protected owner-approved PR path.
-2. Review the protected `dev` → `main` promotion and verify the resulting main SHA and source CI. Keep both activation flags false or unset and the plan non-executable until the owner completes a separate live-operation approval.
-3. Re-read repository variables and the actual plan through an authorized owner interface. If either value is unavailable, changed, or outside approval, stop; the agent cannot infer it from workflow code.
+2. Before any `dev` → `main` promotion, use an authorized owner interface to verify both activation flags are false or unset and the operation plan is absent or non-executable. If any value is unreadable, true, or executable, stop and block promotion.
+3. Review and merge the protected `dev` → `main` PR only after that gate passes. Re-read the resulting main SHA and variable/plan state immediately afterward; keep the flags disabled and plan non-executable until a separate live-operation approval.
 4. Prepare a separate intent-only PR for fresh candidate `v0.0.901` only after source SHA `C` is final. Merge it through the protected path and collect fresh main-push CI/Linux evidence for that exact SHA.
 5. Build and independently review the canonical operation plan for `C`, its exact runs and artifacts, stable channel, `v0.0.901`, and no fault injection. Record its digest without enabling variables or running the Publisher.
 6. Obtain separate owner authorization for activation, Linux rerun, Preflight signing, Final signing, live smoke, mutation-denial probe, and any publication. Each signature and permission is bound to its own exact challenge and evidence.
