@@ -85,7 +85,8 @@ class PhaseDEvidence(evidence.StagedEvidence):
                     == evidence.canonical(snapshot['immutable']), 'Live immutable settings contradict signed evidence')
                 self.native_immutable_visibility = 'RUNNER_VISIBLE'
             record = getattr(call, 'observe_immutable_visibility', None)
-            if record:
+            if record is not None:
+                evidence.require(callable(record), 'Immutable-settings visibility audit unavailable')
                 record(self.native_immutable_visibility)
         evidence.require(int(time.time()) <= self.expires, 'Evidence expired during live controls recheck')
 

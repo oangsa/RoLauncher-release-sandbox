@@ -37,6 +37,8 @@ A successful immutable-settings response must be an object with boolean `enabled
 
 On the explicit permission response, only immutable-settings visibility is marked `OWNER_ATTESTED`. Ruleset inventories and visible bypass arrays continue to be fetched and compared independently by the runner. The audit ledger records `RUNNER_VISIBLE` or `OWNER_ATTESTED` without changing existing readiness status fields.
 
+The live publisher passes `FrozenArtifacts(AuditedTransport(...))` into the evidence gate. `FrozenArtifacts` explicitly forwards visibility observations, and fails closed if its underlying transport cannot record them. An end-to-end offline regression verifies both ledger values through this wrapper and checks that the ledger contains no token, headers, or request body.
+
 HTTP diagnostics expose only method, status, endpoint path, validated accepted-permission text, validated rate-limit remaining, and Retry-After presence. Error bodies are read with a 16 KiB cap for exact classification, then discarded; they are not included in errors or logs. API redirects are rejected for JSON responses. Timeouts, resets, malformed JSON, 401, 404, 429, and 5xx errors fail closed.
 
 ## Freshness and remaining risk
@@ -47,15 +49,12 @@ A runner cannot detect a hidden immutable-settings change while GitHub denies th
 
 ## Validation
 
-TDD reproduced the old generic-403 acceptance before implementation. Mocked regressions cover matching and contradictory HTTP 200 responses; rate limits; `Retry-After`; ambiguous and documented permission 403s; other HTTP failures; timeouts, resets, malformed JSON, and redirects; both signed-evidence gates; and changes immediately before staging or publication. Rejection tests verify no release mutation crosses the boundary.
+TDD reproduced both the generic-403 classification defect and the missing ledger forwarding through the publisher wrapper. Regressions cover matching and contradictory HTTP 200 responses; rate limits; `Retry-After`; ambiguous and documented permission 403s; other HTTP failures; timeouts, resets, malformed JSON, and redirects; both signed-evidence gates; and changes immediately before staging or publication. Rejection tests verify no release mutation crosses the boundary.
 
-- Offline suite: **PASS**, 124 tests.
+- Offline suite: **PASS**, 125 tests.
 - Python syntax and trailing-whitespace/final-newline scans: **PASS**.
-- `actionlint` v1.7.12: **PASS**, all six workflows; binary checksum matched the release checksum file.
-- Hosted CI for candidate HEAD `d509630144921fa54548723777031117a7fbaef4`: **PASS**.
-  - Run `39103414255`: Branch flow, Windows checks, and Linux checks and package (Ubuntu 24.04).
-  - Run `39103414239`: Linux checks (Ubuntu) and Linux checks (Arch).
-  - All five job logs show test-merge SHA `2adc7c1bca093d60dfbb28af96d575e374f00b92`, combining that candidate with base `5363247c87044841ab5a51a3915db6d4f408241f`; no job was skipped.
+- `actionlint` v1.7.12: **PASS**, all six workflows; SHA-256 matched the official release digest.
+- Hosted CI: the PR description records the five required contexts for its current HEAD.
 - `git diff --check`: **NOT RUN**; the materialized copy reports it is not a work tree for diff operations. The equivalent whitespace scan passed.
 ## Unresolved operational blockers
 

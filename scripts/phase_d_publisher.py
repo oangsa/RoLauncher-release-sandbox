@@ -17,6 +17,10 @@ from phase_d import AuditedTransport, PhaseDEvidence, validated_fault
 class FrozenArtifacts:
     """One bounded artifact observation per stage, shared by admission/source gate."""
     def __init__(self,call):self.call,self.cache=call,{}
+    def observe_immutable_visibility(self,visibility):
+        observer=getattr(self.call,'observe_immutable_visibility',None)
+        evidence.require(callable(observer),'Audit transport cannot record immutable-settings visibility')
+        observer(visibility)
     def __call__(self,path,*args,**kwargs):
         cacheable=not args and (re.fullmatch(r'/actions/runs/[1-9][0-9]*/artifacts\?per_page=100',path)
             or re.fullmatch(r'/actions/artifacts/[1-9][0-9]*/zip',path))

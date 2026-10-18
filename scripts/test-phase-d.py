@@ -530,6 +530,44 @@ class EvidenceTests(unittest.TestCase):
             and row.get('observation')=='native-immutable-settings' and row.get('value')=='OWNER_ATTESTED']
         self.assertGreaterEqual(len(owner_attestations),2)
 
+    def test_frozen_artifacts_forwards_security_observations_to_audit_ledger(self):
+        import phase_d_publisher as live
+        with self.assertRaisesRegex(ValueError,'(?i)audit transport cannot record'):
+            live.FrozenArtifacts(lambda *args,**kwargs:None).observe_immutable_visibility('RUNNER_VISIBLE')
+        f=self.fixture
+        for visibility in ('RUNNER_VISIBLE','OWNER_ATTESTED'):
+            with self.subTest(visibility=visibility):
+                f.api=owner.LiveFixture()
+                f.state=f.root/('forwarded-observation-'+visibility.lower())
+                secret='synthetic-token-must-not-enter-ledger'
+                ledger=f.root/(visibility.lower()+'.jsonl')
+                backend=f.api
+                def call(path,method='GET',body=None,**kwargs):
+                    if visibility=='OWNER_ATTESTED' and path=='/immutable-releases':
+                        raise promotion.GitHubAPIError('GET',
+                            'https://api.github.com/repos/'+evidence.REPO+path,403,
+                            {'X-Accepted-GitHub-Permissions':'administration=read',
+                             'X-RateLimit-Remaining':'17'},
+                            b'{"message":"Resource not accessible by integration"}')
+                    return backend(path,method,body,**kwargs)
+                api=phase_d.AuditedTransport(call,ledger)
+                self.addCleanup(api.close)
+                def run(stage):
+                    transport=f.transport(stage)
+                    api.fresh=transport.fresh
+                    return promotion.promote(live.FrozenArtifacts(api),f.api.run,transport)
+                f.post(f.prepare())
+                with self.assertRaises(evidence.ChallengeReady):run('stage')
+                f.post(f.challenge('final'))
+                self.assertEqual(run('finish'),'published')
+                rows=[json.loads(row) for row in ledger.read_text().splitlines()]
+                observations=[row for row in rows if row.get('event')=='security-observation'
+                    and row.get('observation')=='native-immutable-settings']
+                self.assertGreaterEqual(len(observations),2)
+                self.assertEqual({row['value'] for row in observations},{visibility})
+                self.assertNotIn(secret,ledger.read_text())
+                self.assertTrue(all(not {'token','headers','body'} & set(row) for row in rows))
+
     def test_permission_limit_does_not_bypass_invalid_owner_signature(self):
         f=self.fixture
         challenge=f.prepare()
