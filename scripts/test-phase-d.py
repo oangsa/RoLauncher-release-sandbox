@@ -340,6 +340,154 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(f.api.release['prerelease'])
         self.assertEqual(f.api.release['make_latest'],'false')
 
+    def test_visible_immutable_contradiction_denies_both_gates(self):
+        f=self.fixture
+        for phase in ('preflight','final'):
+            with self.subTest(phase=phase):
+                f.api=owner.LiveFixture()
+                f.state=f.root/('immutable-contradiction-'+phase)
+                f.post(f.prepare())
+                if phase=='final':
+                    f.stage()
+                    f.post(f.challenge('final'))
+                before=list(f.api.writes)
+                def changed(path,*args,**kwargs):
+                    if path=='/immutable-releases':return dict(enabled=False,enforced_by_owner=False)
+                    return f.api(path,*args,**kwargs)
+                with self.assertRaisesRegex(ValueError,'immutable'):
+                    promotion.promote(changed,f.api.run,f.transport('stage' if phase=='preflight' else 'finish'))
+                self.assertEqual(f.api.writes,before)
+
+    def test_forbidden_immutable_read_uses_verified_owner_observation(self):
+        f=self.fixture
+        api=self.audit('hidden-immutable')
+        def restricted(path,*args,**kwargs):
+            if path=='/immutable-releases':
+                raise RuntimeError('GitHub GET failed (HTTP 403); no automatic mutation retry')
+            return f.api(path,*args,**kwargs)
+        api.call=restricted
+        self.assertEqual(self.finish(api),'published')
+        self.assertTrue(f.api.release['immutable'])
+
+    def test_visible_bypass_contradiction_denies_both_gates(self):
+        f=self.fixture
+        for phase in ('preflight','final'):
+            with self.subTest(phase=phase):
+                f.api=owner.LiveFixture()
+                f.state=f.root/('bypass-contradiction-'+phase)
+                f.post(f.prepare())
+                if phase=='final':
+                    f.stage()
+                    f.post(f.challenge('final'))
+                before=list(f.api.writes)
+                def changed(path,*args,**kwargs):
+                    result=f.api(path,*args,**kwargs)
+                    if path=='/rulesets/2':
+                        result['bypass_actors']=[dict(actor_type='RepositoryRole',actor_id=5,bypass_mode='always')]
+                    return result
+                with self.assertRaisesRegex(ValueError,'bypass'):
+                    promotion.promote(changed,f.api.run,f.transport('stage' if phase=='preflight' else 'finish'))
+                self.assertEqual(f.api.writes,before)
+
+    def test_live_metadata_change_immediately_before_mutation_denies_both_gates(self):
+        f=self.fixture
+        for phase in ('preflight','final'):
+            with self.subTest(phase=phase):
+                f.api=owner.LiveFixture()
+                f.state=f.root/('metadata-race-'+phase)
+                f.post(f.prepare())
+                if phase=='final':
+                    f.stage()
+                    f.post(f.challenge('final'))
+                before=list(f.api.writes)
+                api=self.audit('metadata-race-'+phase,dict(mutation=1,when='delay-before',seconds=1))
+                api.sleep=lambda seconds:f.api.branch_ruleset['conditions']['ref_name']['exclude'].append('refs/heads/main')
+                with self.assertRaisesRegex(ValueError,'metadata'):
+                    self.run_stage('stage' if phase=='preflight' else 'finish',api)
+                self.assertEqual(f.api.writes,before)
+
+    def test_signed_evidence_denial_matrix_preserves_both_mutation_boundaries(self):
+        f=self.fixture
+        faults=('key','revoked','namespace','payload','base64','base64-padding',
+            'digest','bypass','immutable','repository','owner','trusted','source','workflow','run',
+            'attempt','phase','expired','replay','edited','duplicate','cancel','main','artifacts','receipt','asset')
+        for phase in ('preflight','final'):
+            for fault in faults:
+                with self.subTest(phase=phase,fault=fault):
+                    f.api=owner.LiveFixture()
+                    f.state=f.root/('denial-'+phase+'-'+fault)
+                    c=f.prepare()
+                    if phase=='final':
+                        f.post(c)
+                        f.stage()
+                        c=f.challenge('final')
+                    payload=f.payload(copy.deepcopy(c))
+                    if fault in ('repository','owner','trusted','workflow','run','attempt','phase'):
+                        field={'owner':'owner_id','trusted':'trusted_sha','run':'run_id'}.get(fault,fault)
+                        payload['challenge'][field]='wrong'
+                    if fault=='source':payload['challenge']['binding']['source']['head_sha']='f'*40
+                    if fault=='digest':payload['controls']['rulesets'][0]['rules'].append(dict(type='changed'))
+                    if fault=='bypass':payload['controls']['rulesets'][0].pop('bypass_actors')
+                    if fault=='immutable':payload['controls'].pop('immutable')
+                    if fault=='expired':payload['expires']-=121
+                    if fault=='namespace':
+                        with patch.object(evidence,'NAMESPACE','wrong-namespace'):
+                            response=evidence.sign(payload,f.key)
+                    else:response=evidence.sign(payload,f.other_key if fault=='key' else f.key)
+                    if fault=='payload':
+                        payload['expires']+=1
+                        response['payload_base64']=base64.b64encode(evidence.canonical(payload)).decode()
+                    if fault=='base64':response['payload_base64']='!'
+                    if fault=='base64-padding':response['payload_base64']+='===='
+                    comment=f.post(c,response)
+                    if fault=='edited':comment['updated_at']='edited'
+                    if fault=='duplicate':f.post(c,response)
+                    if fault=='cancel':f.api.comments.clear()
+                    if fault=='main':f.api.branch['commit']['sha']='f'*40
+                    if fault=='artifacts':f.api.artifacts.clear()
+                    if fault=='receipt':f.api.intent['id']='00000000-0000-4000-8000-000000000000'
+                    if fault=='asset':
+                        if phase=='final':next(iter(f.api.assets.values()))['digest']='sha256:'+'0'*64
+                        else:f.api.tag=dict(object=dict(type='commit',sha='f'*40))
+                    if fault=='replay':
+                        (f.state/'preflight-accepted.json').write_bytes(evidence.canonical(dict(challenge=c)))
+                    before=list(f.api.writes)
+                    with patch.object(evidence.time,'monotonic',side_effect=[0,1,2000]),patch.object(evidence.time,'sleep'):
+                        if fault=='revoked':
+                            f.policy['revoked']=['SHA256:'+base64.b64encode(hashlib.sha256(
+                                base64.b64decode(f.public.split()[1])).digest()).decode().rstrip('=')]
+                            f.write_policy()
+                        try:
+                            with self.assertRaises((ValueError,RuntimeError)):
+                                promotion.promote(f.api,f.api.run,f.transport('stage' if phase=='preflight' else 'finish'))
+                            self.assertEqual(f.api.writes,before)
+                        finally:
+                            f.policy['revoked']=[]
+                            f.write_policy()
+
+    def test_ambiguous_or_incomplete_immutable_read_never_falls_back(self):
+        f=self.fixture
+        for phase in ('preflight','final'):
+            for fault in ('missing','null','owner-changed','404','401','500','timeout'):
+                with self.subTest(phase=phase,fault=fault):
+                    f.api=owner.LiveFixture()
+                    f.state=f.root/('immutable-errors-'+phase+'-'+fault)
+                    f.post(f.prepare())
+                    if phase=='final':
+                        f.stage()
+                        f.post(f.challenge('final'))
+                    def unavailable(path,*args,**kwargs):
+                        if path!='/immutable-releases':return f.api(path,*args,**kwargs)
+                        if fault=='missing':return {}
+                        if fault=='null':return None
+                        if fault=='owner-changed':return dict(enabled=True,enforced_by_owner=True)
+                        if fault=='timeout':raise TimeoutError('offline timeout')
+                        raise RuntimeError('GitHub GET failed (HTTP '+fault+'); no automatic mutation retry')
+                    before=list(f.api.writes)
+                    with self.assertRaises((ValueError,RuntimeError,TimeoutError)):
+                        promotion.promote(unavailable,f.api.run,f.transport('stage' if phase=='preflight' else 'finish'))
+                    self.assertEqual(f.api.writes,before)
+
     def test_interruption_matrix_preserves_existing_assets_and_recovers(self):
         f = self.fixture
         for index, when in ((1,'before'), (1,'after'), (2,'after'), (3,'before'), (3,'after'), (4,'before')):
