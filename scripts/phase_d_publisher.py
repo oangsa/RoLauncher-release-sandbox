@@ -131,7 +131,22 @@ def verify_source_artifact(call,binding,workspace=None):
 
 
 class LifecycleEvidence(PhaseDEvidence):
+    def __init__(self,stage,policy_path=evidence.POLICY,state=evidence.STATE,plan=None):
+        super().__init__(stage,policy_path,state)
+        self.plan=plan
+
     def gate(self,phase,call,binding):
+        intent=binding.get('intent') if isinstance(binding,dict) else None
+        source=binding.get('source') if isinstance(binding,dict) else None
+        channel=self.plan.get('channel') if isinstance(self.plan,dict) else None
+        version=intent.get('version') if isinstance(intent,dict) else None
+        expected_channel={'stable':'stable','beta':'beta'}.get(channel)
+        expected_tag=('beta-v' if channel=='beta' else 'v')+version if isinstance(version,str) else None
+        evidence.require(expected_channel is not None and isinstance(intent,dict)
+            and intent.get('channel')==expected_channel
+            and self.plan.get('tag')==expected_tag and isinstance(source,dict)
+            and source.get('head_sha')==self.plan.get('source_sha'),
+            'Phase D operation plan does not match admitted intent/source')
         verify_source_artifact(call,binding,workspace=getattr(self,'workspace',None))
         return super().gate(phase,call,binding)
 
@@ -198,7 +213,7 @@ def scoped_call(call,plan):
 
 
 def main(argv=None,policy_path=evidence.POLICY):
-    # Both flags require separate owner activation. Shipped workflow remains false &&.
+    # Both runtime flags require separate owner activation.
     if os.environ.get('RELEASE_PROMOTION_ENABLED')!='true' or os.environ.get('PHASE_D_LIVE_AUTHORIZED')!='true':
         print('Phase D live operations disabled; explicit separate owner authorization required.')
         return 'disabled'
@@ -214,7 +229,7 @@ def main(argv=None,policy_path=evidence.POLICY):
     event=evidence.parse(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes(),evidence.MAX_API)
     authorize_plan(plan,os.environ,event['workflow_run']['head_sha'])
     evidence.load_policy(policy_path)  # Existing enrolled contract; never self-enroll.
-    transport=LifecycleEvidence(args.stage,policy_path)
+    transport=LifecycleEvidence(args.stage,policy_path,plan=plan)
     ledger=Path('owner-evidence')/f'phase-d-{plan["run_id"]}-{plan["attempt"]}-{args.stage}.jsonl'
     fault=dict(plan['fault']) if plan['fault'] else None
     if fault:
@@ -223,7 +238,7 @@ def main(argv=None,policy_path=evidence.POLICY):
     audit=AuditedTransport(None,ledger,fault,fresh=transport.fresh)
     audit.call=scoped_call(promotion.github_api(os.environ['GITHUB_TOKEN'],observer=audit.observe_status),plan)
     try:
-        try:result=promotion.promote_event(FrozenArtifacts(audit),event,evidence=transport)
+        try:result=promotion.promote_event(FrozenArtifacts(audit),event,channel=plan['channel'],evidence=transport)
         except evidence.ChallengeReady:result='challenge-ready'
         if args.stage=='prepare':
             with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:

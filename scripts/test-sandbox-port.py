@@ -201,9 +201,9 @@ class PortTests(unittest.TestCase):
     def test_hosted_ci_and_manual_readiness_are_repository_pinned(self):
         enabled = {('ci-release.yml', 'branch-flow'), ('ci-release.yml', 'windows-checks'),
                    ('ci-release.yml', 'linux-checks'), ('linux.yml', 'linux-checks'),
-                   ('phase-d-readiness.yml', 'inspect')}
+                   ('phase-d-readiness.yml', 'inspect'), ('release-promotion.yml', 'promote')}
         disabled = {('beta-release.yml', 'windows-checks'), ('beta-release.yml', 'linux-checks'),
-                    ('release-promotion.yml', 'promote'), ('owner-evidence-dry-run.yml', 'verify')}
+                    ('owner-evidence-dry-run.yml', 'verify')}
         seen = set()
         for workflow in (ROOT / '.github/workflows').glob('*.yml'):
             text = workflow.read_text()
@@ -220,8 +220,10 @@ class PortTests(unittest.TestCase):
                              + "      github.repository == '" + SANDBOX + "' &&\n"
                              + "      github.repository_id == '1423257712'")
                     if identity == ('release-promotion.yml', 'promote'):
-                        guard = guard.replace('      false &&\n',
-                                              "      false &&\n      vars.RELEASE_PROMOTION_ENABLED == 'true' &&\n")
+                        guard = guard.replace("      github.repository ==",
+                            "      vars.RELEASE_PROMOTION_ENABLED == 'true' &&\n"
+                            "      vars.PHASE_D_LIVE_AUTHORIZED == 'true' &&\n"
+                            "      github.repository ==")
                     self.assertIn(guard, job)
             self.assertNotIn('pull_request_target', text)
             self.assertNotIn('administration:', text)

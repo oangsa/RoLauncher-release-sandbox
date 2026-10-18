@@ -8,10 +8,10 @@ Implementation PR merges, activations, attendance, public signed posts, exact fi
 1. Review feature branch into dev; require all five exact contexts and owner-approved merge commit.
 2. Promote official dev to main; require exact test-merge checks and separate owner merge approval.
 3. Verify resulting main, policy, all five checks, artifact/source integrity and unchanged complete controls digest.
-4. Separately review only the readiness activation patch; no publisher activation is needed for its GET-only dispatch.
+4. Review readiness activation and Publisher activation as separate proposals; readiness dispatch is GET-only and does not authorize publication.
 5. After approved dispatch, record run/attempt/source, exact declarations and visibility results; missing bypass/immutability privilege is BLOCKED.
 
-Neither activation proposal is applied by implementation. Historical PoC and Beta workflows stay hard-disabled.
+This branch proposes the Publisher guard behind two explicit runtime variables; it is not authority to merge or enable them. Historical PoC and Beta workflows stay hard-disabled.
 
 ## Publication approval sequence
 
@@ -26,7 +26,7 @@ For large live cases, separately review `phase-d/large-builders.activation.patch
 It changes only inert package generation; source run admission, named inventories, action pins and upload guards remain intact.
 Choose exact dataset, source and version before publication; never change accepted artifact bytes under an already published tag.
 
-`PHASE_D_LIVE_AUTHORIZED`, `RELEASE_PROMOTION_ENABLED` and `PHASE_D_OPERATION_PLAN` are held/unset.
+No repository variables are changed by this proposal. Their live state is `VARIABLE_STATE_NOT_VERIFIED`; before any default-branch promotion, the owner must independently verify both flags are false/unset and no executable operation plan is configured.
 The operation-scope example is inert and rejected until placeholders become exact reviewed 40-hex source/trusted SHAs.
 Runtime binds its actual publisher run/attempt; this configuration grants no signature authority and cannot replace either owner-attended gate.
 
