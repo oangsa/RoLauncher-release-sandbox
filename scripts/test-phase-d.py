@@ -243,6 +243,49 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['privileged_controls'],'BLOCKED')
         self.assertTrue(result['missing_bypass_arrays'])
 
+    def test_readiness_entry_is_get_only_and_rejects_untrusted_context_before_transport(self):
+        import contextlib
+        import phase_d_readiness as readiness
+        f=self.fixture
+        calls=[]
+        visible=False
+        def backend(path,method='GET'):
+            self.assertEqual(method,'GET')
+            calls.append(path)
+            if path=='/branches/main':return {'commit':{'sha':'a'*40}}
+            return f.api.full(path) if visible else f.api(path)
+        env=dict(PHASE_D_READ_ONLY_AUTHORIZED='true',GITHUB_REPOSITORY=evidence.REPO,
+            GITHUB_REPOSITORY_ID=str(evidence.REPO_ID),GITHUB_EVENT_NAME='workflow_dispatch',
+            GITHUB_REF='refs/heads/main',GITHUB_WORKFLOW_REF=evidence.REPO+
+                '/.github/workflows/phase-d-readiness.yml@refs/heads/main',GITHUB_SHA='a'*40,
+            GITHUB_TOKEN='offline-token',GITHUB_RUN_ID='99',GITHUB_RUN_ATTEMPT='1')
+        with patch.dict(os.environ,env,clear=True),contextlib.chdir(f.root), \
+                patch.object(promotion,'github_api',return_value=backend) as factory, \
+                patch.object(evidence,'load_policy',return_value=(f.policy,f.policy['keys'])), \
+                patch.object(evidence,'sign') as sign:
+            with self.assertRaises(SystemExit) as blocked:
+                readiness.main()
+            self.assertEqual(blocked.exception.code,1)
+            result=json.loads(Path('phase-d-readiness.json').read_text())
+            self.assertEqual(result['privileged_controls'],'BLOCKED')
+            self.assertEqual(result['trusted_sha'],'a'*40)
+            self.assertEqual((result['run_id'],result['attempt']),(99,1))
+            self.assertEqual(json.loads(Path('phase-d-readiness.json').read_text()),result)
+            visible=True
+            self.assertEqual(readiness.main()['privileged_controls'],'PASS')
+            accepted_calls=list(calls)
+            for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_EVENT_NAME','pull_request'),
+                    ('GITHUB_REF','refs/heads/codex/test'),('GITHUB_REPOSITORY','oangsa/RoLauncher'),
+                    ('GITHUB_REPOSITORY_ID','1'),('GITHUB_WORKFLOW_REF','untrusted'),
+                    ('PHASE_D_READ_ONLY_AUTHORIZED','false')]:
+                with self.subTest(key=key,value=value),patch.dict(os.environ,{key:value}),self.assertRaises(ValueError):
+                    readiness.main()
+            self.assertEqual(calls,accepted_calls)
+            self.assertEqual(factory.call_count,2)
+            factory.assert_called_with('offline-token')
+            sign.assert_not_called()
+        self.assertEqual(f.api.writes,[])
+
     def test_full_lifecycle_ledger_and_consumed_retry_have_no_duplicate_mutations(self):
         f = self.fixture
         api = self.audit('positive')

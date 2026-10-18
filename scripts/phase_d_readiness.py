@@ -51,7 +51,10 @@ def main():
                   permission_context='publisher-equivalent declarations; separate read-only workflow')
     Path('phase-d-readiness.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result,indent=2))
-    # BLOCKED metadata is evidence of missing privilege, never PASS or an empty bypass.
+    # Preserve diagnostics, but never turn missing privilege into a green job.
+    if result['privileged_controls']!='PASS':
+        print('::error::Readiness BLOCKED; operational verification did not pass.')
+        raise SystemExit(1)
     return result
 
 
