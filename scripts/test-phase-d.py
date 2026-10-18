@@ -153,17 +153,34 @@ class AuditTests(unittest.TestCase):
     def test_publication_scope_pins_release_id_before_upload_or_patch(self):
         import phase_d_publisher as live
         writes=[]
+        release=dict(id=50,tag_name='v0.0.900',target_commitish='a'*40,prerelease=False,
+            draft=True,body='<!-- release-promotion:'+'f'*64+' -->',assets=[])
         def backend(path,method='GET',body=None,**kwargs):
             if method!='GET':writes.append(path)
-            return dict(id=50,tag_name='v0.0.900',target_commitish='a'*40,prerelease=False)
+            if path=='/releases/50':return dict(release)
+            if path=='/releases?per_page=100&page=1':return [dict(release)]
+            if path=='/releases?per_page=100&page=2':return []
+            if path=='/releases/tags/v0.0.900':return dict(release)
+            return dict(release)
         api=live.scoped_call(backend,dict(tag='v0.0.900',source_sha='a'*40,channel='stable'))
         body=dict(draft=False,prerelease=False,make_latest='true')
         with self.assertRaises(ValueError):api('/releases/999','PATCH',body)
         self.assertEqual(writes,[])
-        api('/releases/tags/v0.0.900')
+        with self.assertRaisesRegex(ValueError,'numeric readback'):
+            api.authorize_release(release)
+        listed=api('/releases?per_page=100&page=1')[0]
+        with self.assertRaisesRegex(ValueError,'numeric readback'):
+            api.authorize_release(listed)
+        numeric=api('/releases/50')
         with self.assertRaises(ValueError):
             api('https://uploads.github.com/repos/'+evidence.REPO+'/releases/999/assets?name=release-promotion.json',
                 'POST',binary=b'inert')
+        self.assertEqual(writes,[])
+        api.authorize_release(numeric)
+        with self.assertRaisesRegex(ValueError,'asset mismatch'):
+            api('https://uploads.github.com/repos/'+evidence.REPO+'/releases/50/assets?name=rolauncher-v0.0.900-extra.bin',
+                'POST',binary=b'inert')
+        with self.assertRaises(ValueError):api('/releases/50','DELETE')
         self.assertEqual(writes,[])
         api('/releases/50','PATCH',body)
         self.assertEqual(writes,['/releases/50'])

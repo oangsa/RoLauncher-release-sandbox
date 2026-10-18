@@ -27,6 +27,11 @@ class FrozenArtifacts:
         evidence.require(callable(observer), 'Audit transport cannot record immutable-settings visibility')
         observer(visibility)
 
+    def authorize_release(self, release):
+        authorizer = getattr(self.call, 'authorize_release', None)
+        if callable(authorizer):
+            authorizer(release)
+
     def close(self):
         if self.workspace is not None:
             self.workspace.close()
@@ -179,36 +184,88 @@ def authorize_plan(plan, env, source):
 
 
 def scoped_call(call,plan):
-    release_ids=set()
+    mutable_release_ids=set()
+    numeric_readbacks={}
+    tag_create_attempted=False
+    release_create_attempted=False
+    version=plan['tag'].removeprefix('beta-v').removeprefix('v')
+    allowed_assets={'release-promotion.json'} | {
+        'rolauncher-v'+version+suffix for suffix in (
+            '-setup-x64.exe','-windows-x64.zip','-source.zip','-linux-x64.tar.gz','-SHA256SUMS.txt')}
+
+    def identity_matches(release,release_id):
+        return (isinstance(release,dict) and type(release.get('id')) is int
+            and release['id']==release_id and release.get('tag_name')==plan['tag']
+            and release.get('target_commitish')==plan['source_sha']
+            and release.get('prerelease') is (plan['channel']=='beta'))
+
+    def authorize_release(release):
+        evidence.require(isinstance(release,dict) and type(release.get('id')) is int
+            and release['id']>0,'Malformed validated Release ID')
+        release_id=release['id']
+        readback=numeric_readbacks.get(release_id)
+        evidence.require(readback is not None and readback is release
+            and identity_matches(readback,release_id),'Release ID lacks matching numeric readback')
+        body=release.get('body')
+        evidence.require(isinstance(body,str)
+            and len(re.findall(r'<!-- release-promotion:[a-f0-9]{64} -->',body))==1,
+            'Release ID lacks one valid receipt marker')
+        assets=release.get('assets')
+        evidence.require(isinstance(assets,list),'Release ID assets are malformed')
+        names=[]
+        for asset in assets:
+            evidence.require(isinstance(asset,dict) and isinstance(asset.get('name'),str)
+                and asset['name'] in allowed_assets and type(asset.get('id')) is int
+                and type(asset.get('size')) is int and asset['size']>=0
+                and isinstance(asset.get('digest'),str)
+                and re.fullmatch(r'sha256:[a-f0-9]{64}',asset['digest'])
+                and asset.get('state')=='uploaded','Release ID has unvalidated asset metadata')
+            names.append(asset['name'])
+        evidence.require(len(names)==len(set(names)),'Release ID has duplicate asset names')
+        if release.get('draft') is True:
+            mutable_release_ids.add(release_id)
+
     def scoped(path,method='GET',body=None,**kwargs):
+        nonlocal tag_create_attempted,release_create_attempted
         if method!='GET':
             evidence.require(method in ('POST','PATCH'),'Phase D publication never deletes')
             if path=='/git/refs':
-                evidence.require(method=='POST' and body=={'ref':'refs/tags/'+plan['tag'],'sha':plan['source_sha']},'Plan tag mismatch')
+                evidence.require(method=='POST' and not tag_create_attempted
+                    and body=={'ref':'refs/tags/'+plan['tag'],'sha':plan['source_sha']},'Plan tag mismatch')
+                tag_create_attempted=True
             elif path=='/releases':
-                evidence.require(method=='POST' and body['tag_name']==plan['tag']
-                    and body['target_commitish']==plan['source_sha'] and body['draft'] is True
-                    and body['prerelease']==(plan['channel']=='beta'),'Plan draft mismatch')
+                evidence.require(method=='POST' and not release_create_attempted
+                    and not mutable_release_ids and isinstance(body,dict)
+                    and set(body)=={'tag_name','target_commitish','name','body','draft','prerelease','make_latest'}
+                    and body['tag_name']==plan['tag'] and body['target_commitish']==plan['source_sha']
+                    and body['name']=='RoLauncher '+version and body['draft'] is True
+                    and body['prerelease']==(plan['channel']=='beta') and body['make_latest']=='false'
+                    and isinstance(body['body'],str)
+                    and len(re.findall(r'<!-- release-promotion:[a-f0-9]{64} -->',body['body']))==1,
+                    'Plan draft mismatch')
+                release_create_attempted=True
             elif path.startswith('https://uploads.github.com/'):
-                version=plan['tag'].removeprefix('beta-v').removeprefix('v')
-                name=path.split('?name=',1)[-1]
-                evidence.require(method=='POST' and (name=='release-promotion.json'
-                    or name.startswith('rolauncher-v'+version+'-')),'Plan asset mismatch')
                 match=re.fullmatch('https://uploads.github.com/repos/'+re.escape(evidence.REPO)+r'/releases/([1-9][0-9]*)/assets\?name=[A-Za-z0-9._-]+',path)
-                evidence.require(match and int(match[1]) in release_ids,'Plan upload Release ID mismatch')
+                evidence.require(method=='POST' and match and path.rsplit('=',1)[1] in allowed_assets
+                    and int(match[1]) in mutable_release_ids
+                    and numeric_readbacks.get(int(match[1]),{}).get('draft') is True,
+                    'Plan upload Release ID or asset mismatch')
             else:
-                evidence.require(method=='PATCH' and re.fullmatch('/releases/[1-9][0-9]*',path)
-                    and int(path.rsplit('/',1)[1]) in release_ids
+                match=re.fullmatch('/releases/([1-9][0-9]*)',path)
+                evidence.require(method=='PATCH' and match and int(match[1]) in mutable_release_ids
+                    and numeric_readbacks.get(int(match[1]),{}).get('draft') is True
+                    and identity_matches(numeric_readbacks[int(match[1])],int(match[1]))
                     and body=={'draft':False,'prerelease':plan['channel']=='beta',
                                'make_latest':'false' if plan['channel']=='beta' else 'true'},'Plan publication mismatch')
         result=call(path,method,body,**kwargs)
-        if result is not None and ((path=='/releases' and method=='POST')
-            or (path=='/releases/tags/'+plan['tag'] and method=='GET')):
-            evidence.require(type(result['id']) is int and result['id']>0
-                and result['tag_name']==plan['tag'] and result['target_commitish']==plan['source_sha']
-                and result['prerelease']==(plan['channel']=='beta'),'Plan Release readback mismatch')
-            release_ids.add(result['id'])
+        numeric=re.fullmatch('/releases/([1-9][0-9]*)',path) if method=='GET' else None
+        if numeric:
+            release_id=int(numeric[1])
+            evidence.require(isinstance(result,dict) and type(result.get('id')) is int
+                and result['id']==release_id,'Plan numeric Release readback mismatch')
+            numeric_readbacks[release_id]=result
         return result
+    scoped.authorize_release=authorize_release
     return scoped
 
 
@@ -236,7 +293,10 @@ def main(argv=None,policy_path=evidence.POLICY):
         stage=fault.pop('stage')
         if stage!=args.stage:fault=None
     audit=AuditedTransport(None,ledger,fault,fresh=transport.fresh)
-    audit.call=scoped_call(promotion.github_api(os.environ['GITHUB_TOKEN'],observer=audit.observe_status),plan)
+    scoped=scoped_call(promotion.github_api(os.environ['GITHUB_TOKEN'],observer=audit.observe_status),plan)
+    evidence.require(callable(getattr(scoped,'authorize_release',None)),
+                     'Live Publisher scope lacks Release-ID admission')
+    audit.call=scoped
     try:
         try:result=promotion.promote_event(FrozenArtifacts(audit),event,channel=plan['channel'],evidence=transport)
         except evidence.ChallengeReady:result='challenge-ready'

@@ -2,6 +2,8 @@
 
 **PREPARED — NOT AUTHORIZED FOR ACTIVATION**
 
+**Superseded for current candidate recovery:** use [Phase D draft recovery remediation](PHASE-D-DRAFT-RECOVERY-REMEDIATION.md) for current branch, Release, intent, and owner-state readbacks. The checklist below records an earlier sequence and must not be used to resume v0.0.900.
+
 Every item is a separate owner approval. Bind it to the exact revision, run/attempt, plan digest, and proposed action. Completing one item does not approve later items.
 
 Current verified state (2026-10-18): `main` is `b19226ccc5a28fe2632bf6d3c4d6f4b2eb9ab230`; PR #20 merged into `dev` as `f5c36daca15d569e53eac651be9a795dd71fb9e6`. PR #21 remains open and Draft after a transparent merge of updated `dev` into its branch. The refreshed HEAD, base, and test-merge SHA are recorded in the live PR metadata and body for owner review. The inert candidate proposal is on `dev`, but `.github/release-intents/` is absent. Variable state remains `VARIABLE_STATE_NOT_VERIFIED`.
