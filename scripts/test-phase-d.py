@@ -540,15 +540,18 @@ class EvidenceTests(unittest.TestCase):
                 f.api=owner.LiveFixture()
                 f.state=f.root/('forwarded-observation-'+visibility.lower())
                 secret='synthetic-token-must-not-enter-ledger'
+                permission_body=json.dumps({'message':'Resource not accessible by integration',
+                    'access_token':secret}).encode()
                 ledger=f.root/(visibility.lower()+'.jsonl')
                 backend=f.api
                 def call(path,method='GET',body=None,**kwargs):
                     if visibility=='OWNER_ATTESTED' and path=='/immutable-releases':
                         raise promotion.GitHubAPIError('GET',
                             'https://api.github.com/repos/'+evidence.REPO+path,403,
-                            {'X-Accepted-GitHub-Permissions':'administration=read',
+                            {'Authorization':'Bearer '+secret,
+                             'X-Accepted-GitHub-Permissions':'administration=read',
                              'X-RateLimit-Remaining':'17'},
-                            b'{"message":"Resource not accessible by integration"}')
+                            permission_body)
                     return backend(path,method,body,**kwargs)
                 api=phase_d.AuditedTransport(call,ledger)
                 self.addCleanup(api.close)
