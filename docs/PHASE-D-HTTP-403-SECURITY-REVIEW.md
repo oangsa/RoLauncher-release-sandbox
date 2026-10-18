@@ -47,10 +47,16 @@ A runner cannot detect a hidden immutable-settings change while GitHub denies th
 
 ## Validation
 
-TDD reproduced the old generic-403 acceptance first, then added regressions before the implementation. Mocked tests cover matching and contradictory HTTP 200 responses; primary/secondary rate limits; `Retry-After`; ambiguous and unclassified 403s; the documented permission response; 401, 404, 429, 500, 502, and 503; timeout, connection reset, malformed JSON, redirects; valid and invalid owner signatures; both authorization gates; and setting changes immediately before staging and publication. Mutation-boundary assertions confirm rejected preflight/final evidence causes no corresponding release writes.
+TDD reproduced the old generic-403 acceptance before implementation. Mocked regressions cover matching and contradictory HTTP 200 responses; rate limits; `Retry-After`; ambiguous and documented permission 403s; other HTTP failures; timeouts, resets, malformed JSON, and redirects; both signed-evidence gates; and changes immediately before staging or publication. Rejection tests verify no release mutation crosses the boundary.
 
-`python scripts/offline_tests.py`: **PASS**, 124 tests. `python -m py_compile` of modified Python sources: **PASS**. `actionlint` v1.7.12: **PASS**, all six workflow files; the temporary binary matched the release checksum. A trailing-whitespace and final-newline scan: **PASS**. `git diff --check`: **NOT RUN** because Git reports this materialized copy is not a work tree for diff operations, even though `git status` works. Hosted CI results are pending the remediation PR and must be checked on both its exact HEAD and PR test-merge revision. The required hosted contexts are Branch flow, Windows checks, Linux checks and package (Ubuntu 24.04), Linux checks (Ubuntu), and Linux checks (Arch); skipped jobs do not count as success.
-
+- Offline suite: **PASS**, 124 tests.
+- Python syntax and trailing-whitespace/final-newline scans: **PASS**.
+- `actionlint` v1.7.12: **PASS**, all six workflows; binary checksum matched the release checksum file.
+- Hosted CI for candidate HEAD `d509630144921fa54548723777031117a7fbaef4`: **PASS**.
+  - Run `39103414255`: Branch flow, Windows checks, and Linux checks and package (Ubuntu 24.04).
+  - Run `39103414239`: Linux checks (Ubuntu) and Linux checks (Arch).
+  - All five job logs show test-merge SHA `2adc7c1bca093d60dfbb28af96d575e374f00b92`, combining that candidate with base `5363247c87044841ab5a51a3915db6d4f408241f`; no job was skipped.
+- `git diff --check`: **NOT RUN**; the materialized copy reports it is not a work tree for diff operations. The equivalent whitespace scan passed.
 ## Contract changes and next authorization
 
 The existing authorization contract is preserved: this permission classification permits only an owner-attested setting observation after the existing signed evidence checks. It does not relax source admission, expand publication scope, change credentials, or activate Publisher, Beta, readiness, or historical PoC workflows. There is no new proposed contract change.
